@@ -1,0 +1,12 @@
+speechrecognition
+pyaudio
+google-cloud-texttospeech
+pygame>=2.6.0
+google-genai
+pyautogui
+requests
+python-dotenv
+pyperclip
+keyboard
+pillow
+pyttsx3
