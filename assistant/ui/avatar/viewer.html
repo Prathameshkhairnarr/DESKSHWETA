@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Shweta Avatar</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0f1a; overflow: hidden; font-family: 'Orbitron', sans-serif; }
+canvas { display: block; }
+
+#status {
+    position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+    color: #00d4ff; font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    text-shadow: 0 0 10px #00d4ff55; opacity: 0.7;
+    pointer-events: none;
+}
+#drag-bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 30px;
+    cursor: move; -webkit-app-region: drag;
+    background: linear-gradient(180deg, rgba(0,200,255,0.1) 0%, transparent 100%);
+}
+#indicator {
+    position: fixed; top: 15px; right: 15px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #00ff88; box-shadow: 0 0 8px #00ff8888;
+    transition: background 0.3s, box-shadow 0.3s;
+}
+#error {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #ff4444; font-size: 14px; display: none;
+}
+</style>
+</head>
+<body>
+<div id="drag-bar"></div>
+<div id="status">Idle</div>
+<div id="indicator"></div>
+<div id="error">Model not found</div>
+
+<!-- Three.js r137 + three-vrm v1.0.0 -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@1.0.0/lib/three-vrm.js"></script>
+
+<script>
+// === GLOBALS ===
+let scene, camera, renderer, vrm, clock;
+let currentState = 'idle';
+let lipSyncValue = 0.0;
+let targetLipSync = 0.0;
+let mouseX = 0, mouseY = 0;
+let blinkTimer = 0, blinkDuration = 0;
+let isBlinking = false;
+let breathPhase = 0;
+
+// === EMOTION SYSTEM ===
+let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed
+let emotionIntensity = 0.0;
+let targetEmotionIntensity = 0.0;
+let emotionDecayTimer = 0;  // Auto-decay emotion after some time
+let emotionHeadTiltX = 0;  // Emotion-driven head X rotation target
+let emotionHeadTiltZ = 0;  // Emotion-driven head Z rotation target
+
+// === INIT ===
+function init() {
+    clock = new THREE.Clock();
+    scene = new THREE.Scene();
+
+    // Camera — portrait view, upper body
+    camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 100);
+    // Camera — zoomed to head + chest only
+    camera.position.set(0, 1.35, 1.2);
+    camera.lookAt(new THREE.Vector3(0, 1.25, 0));
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0x0a0f1a, 1);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    document.body.appendChild(renderer.domElement);
+
+    // Lighting — soft natural (reduced shine)
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffeedd, 0.35);
+    dirLight.position.set(0, 2, 3);
+    scene.add(dirLight);
+
+    const sideLight = new THREE.DirectionalLight(0xddeeff, 0.15);
+    sideLight.position.set(-2, 1, 2);
+    scene.add(sideLight);
+
+    // Load VRM using three-vrm v1.0.0 VRMLoaderPlugin
+    const loader = new THREE.GLTFLoader();
+    loader.register((parser) => {
+        return new THREE_VRM.VRMLoaderPlugin(parser);
+    });
+    
+    loader.load('./AvatarSample_F.vrm',
+        (gltf) => {
+            vrm = gltf.userData.vrm;
+            if (vrm) {
+                scene.add(vrm.scene);
+                // Scale X by -1 = mirror = face visible from camera
+                vrm.scene.scale.x = -1;
+                
+                // Fix T-pose — rotate arms down using normalized bones
+                // VRM 1.0 uses normalized bone hierarchy
+                setTimeout(() => { console.log('VRM ready'); }, 500);
+
+                console.log('VRM loaded!');
+            } else {
+                document.getElementById('error').style.display = 'block';
+            }
+        },
+        null,
+        (err) => {
+            console.error('VRM load error:', err);
+            document.getElementById('error').style.display = 'block';
+        }
+    );
+
+    // Mouse tracking
+    document.addEventListener('mousemove', (e) => {
+        mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+        mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+    });
+
+    // Resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Start blink timer
+    blinkTimer = 3 + Math.random() * 3;
+
+    animate();
+}
+
+// === ANIMATION LOOP ===
+function animate() {
+    requestAnimationFrame(animate);
+    const delta = clock.getDelta();
+
+    if (vrm) {
+        // 1. BREATHING
+        breathPhase += delta * 1.5;
+        const breathVal = Math.sin(breathPhase) * 0.003;
+        const spine = vrm.humanoid.getRawBoneNode('spine') || vrm.humanoid.getBoneNode('spine');
+        if (spine) {
+            spine.position.y = breathVal;
+        }
+
+        // 2. AUTO BLINKING
+        blinkTimer -= delta;
+        if (blinkTimer <= 0 && !isBlinking) {
+            isBlinking = true;
+            blinkDuration = 0;
+        }
+        if (isBlinking) {
+            blinkDuration += delta;
+            let blinkVal = 0;
+            if (blinkDuration < 0.05) blinkVal = blinkDuration / 0.05;
+            else if (blinkDuration < 0.1) blinkVal = 1.0;
+            else if (blinkDuration < 0.15) blinkVal = 1.0 - (blinkDuration - 0.1) / 0.05;
+            else {
+                isBlinking = false;
+                blinkTimer = 3 + Math.random() * 3;
+                blinkVal = 0;
+            }
+            if (vrm.expressionManager) {
+                vrm.expressionManager.setValue('blink', blinkVal);
+            } else if (vrm.blendShapeProxy) {
+                vrm.blendShapeProxy.setValue('blink', blinkVal);
+            }
+        }
+
+        // 3. MOUSE EYE/HEAD TRACKING (combined with emotion head tilt)
+        const headNode = vrm.humanoid.getBoneNode('head');
+        if (headNode) {
+            // Combine mouse tracking + emotion tilt
+            const targetHeadY = mouseX * 0.3;
+            const targetHeadX = (mouseY * 0.15) + emotionHeadTiltX;
+            const targetHeadZ = emotionHeadTiltZ;
+            
+            headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetHeadY, delta * 3);
+            headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetHeadX, delta * 3);
+            headNode.rotation.z = THREE.MathUtils.lerp(headNode.rotation.z, targetHeadZ, delta * 3);
+        }
+        const leftEye = vrm.humanoid.getBoneNode('leftEye');
+        const rightEye = vrm.humanoid.getBoneNode('rightEye');
+        if (leftEye) {
+            leftEye.rotation.y = THREE.MathUtils.lerp(leftEye.rotation.y, mouseX * 0.4, delta * 5);
+            leftEye.rotation.x = THREE.MathUtils.lerp(leftEye.rotation.x, -mouseY * 0.2, delta * 5);
+        }
+        if (rightEye) {
+            rightEye.rotation.y = THREE.MathUtils.lerp(rightEye.rotation.y, mouseX * 0.4, delta * 5);
+            rightEye.rotation.x = THREE.MathUtils.lerp(rightEye.rotation.x, -mouseY * 0.2, delta * 5);
+        }
+
+        // 4. LIP SYNC (smooth lerp with natural jaw movement)
+        lipSyncValue = THREE.MathUtils.lerp(lipSyncValue, targetLipSync, delta * 15);
+        // Add slight variation for natural look
+        let lipVal = lipSyncValue;
+        if (lipVal > 0.05) {
+            // Add micro-variation to avoid robotic look
+            lipVal += Math.sin(clock.elapsedTime * 12) * 0.03;
+            lipVal = Math.max(0, Math.min(1, lipVal));
+        }
+        if (vrm.expressionManager) {
+            vrm.expressionManager.setValue('aa', lipVal * 0.8);
+            // Add 'oh' shape for rounder mouth on higher volumes
+            vrm.expressionManager.setValue('oh', lipVal * 0.3);
+        } else if (vrm.blendShapeProxy) {
+            vrm.blendShapeProxy.setValue('a', lipVal * 0.8);
+            vrm.blendShapeProxy.setValue('o', lipVal * 0.3);
+        }
+
+        // 5. EMOTION SYSTEM — smooth blend between expressions
+        if (vrm.expressionManager || vrm.blendShapeProxy) {
+            const expr = vrm.expressionManager || vrm.blendShapeProxy;
+            
+            // Smooth intensity transition
+            emotionIntensity = THREE.MathUtils.lerp(emotionIntensity, targetEmotionIntensity, delta * 4);
+            
+            // Auto-decay emotion after 5 seconds
+            emotionDecayTimer -= delta;
+            if (emotionDecayTimer <= 0 && targetEmotionIntensity > 0) {
+                targetEmotionIntensity = Math.max(0, targetEmotionIntensity - delta * 0.3);
+                if (targetEmotionIntensity < 0.05) {
+                    targetEmotionIntensity = 0;
+                    currentEmotion = 'neutral';
+                }
+            }
+            
+            // Reset all expressions first (avoid stacking)
+            expr.setValue('happy', 0);
+            expr.setValue('angry', 0);
+            expr.setValue('sad', 0);
+            expr.setValue('surprised', 0);
+            expr.setValue('relaxed', 0);
+            
+            // Apply current emotion
+            switch(currentEmotion) {
+                case 'happy':
+                    expr.setValue('happy', emotionIntensity * 0.8);
+                    // Slight head tilt for cute happy look
+                    emotionHeadTiltZ = emotionIntensity * 0.05;
+                    emotionHeadTiltX = 0;
+                    break;
+                    
+                case 'angry':
+                    expr.setValue('angry', emotionIntensity * 0.7);
+                    // Head slightly forward (aggressive)
+                    emotionHeadTiltX = emotionIntensity * 0.1;
+                    emotionHeadTiltZ = 0;
+                    break;
+                    
+                case 'sad':
+                    expr.setValue('sad', emotionIntensity * 0.7);
+                    // Head tilted DOWN noticeably
+                    emotionHeadTiltX = -emotionIntensity * 0.2;
+                    emotionHeadTiltZ = emotionIntensity * 0.04;
+                    break;
+                    
+                case 'surprised':
+                    expr.setValue('surprised', emotionIntensity * 0.8);
+                    // Head slightly back
+                    emotionHeadTiltX = -emotionIntensity * 0.08;
+                    emotionHeadTiltZ = 0;
+                    break;
+                    
+                case 'relaxed':
+                    expr.setValue('relaxed', emotionIntensity * 0.6);
+                    expr.setValue('happy', emotionIntensity * 0.2);
+                    emotionHeadTiltX = 0;
+                    emotionHeadTiltZ = emotionIntensity * 0.03;
+                    break;
+                    
+                case 'neutral':
+                default:
+                    // Subtle smile when listening
+                    if (currentState === 'listening') {
+                        expr.setValue('happy', 0.2);
+                    }
+                    emotionHeadTiltX = 0;
+                    emotionHeadTiltZ = 0;
+                    break;
+            }
+            
+            // Thinking state: head tilt
+            if (currentState === 'thinking' && currentEmotion === 'neutral') {
+                emotionHeadTiltZ = 0.05;
+            }
+        }
+
+        // Update VRM
+        vrm.update(delta);
+        
+        // AFTER vrm.update — override arm bones every frame
+        const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+        const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+        if (lArm) lArm.rotation.z = -1.0;
+        if (rArm) rArm.rotation.z = 1.0;
+    }
+
+    renderer.render(scene, camera);
+}
+
+// === JAVASCRIPT API (Python calls these) ===
+
+window.setAvatarState = function(state) {
+    currentState = state;
+    const statusEl = document.getElementById('status');
+    const indicator = document.getElementById('indicator');
+
+    switch(state) {
+        case 'idle':
+            statusEl.textContent = 'Ready';
+            indicator.style.background = '#00ff88';
+            indicator.style.boxShadow = '0 0 8px #00ff8888';
+            break;
+        case 'listening':
+            statusEl.textContent = 'Listening...';
+            indicator.style.background = '#00ff88';
+            indicator.style.boxShadow = '0 0 12px #00ff88';
+            break;
+        case 'thinking':
+            statusEl.textContent = 'Thinking...';
+            indicator.style.background = '#ffaa00';
+            indicator.style.boxShadow = '0 0 8px #ffaa0088';
+            break;
+        case 'speaking':
+            statusEl.textContent = 'Speaking...';
+            indicator.style.background = '#4488ff';
+            indicator.style.boxShadow = '0 0 8px #4488ff88';
+            break;
+    }
+};
+
+window.setLipSync = function(volume) {
+    // Smooth target — don't let mouth snap shut instantly
+    let v = Math.min(1.0, Math.max(0.0, volume));
+    // If closing mouth, slow down the transition
+    if (v < targetLipSync * 0.3) {
+        targetLipSync = targetLipSync * 0.5; // gradual close
+    } else {
+        targetLipSync = v;
+    }
+};
+
+window.setEmotion = function(emotion, intensity) {
+    // Set avatar emotion: happy, angry, sad, surprised, relaxed, neutral
+    // intensity: 0.0-1.0 (default 0.8)
+    const validEmotions = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
+    emotion = emotion.toLowerCase();
+    
+    if (!validEmotions.includes(emotion)) {
+        emotion = 'neutral';
+    }
+    
+    currentEmotion = emotion;
+    targetEmotionIntensity = (intensity !== undefined) ? Math.min(1.0, Math.max(0.0, intensity)) : 0.8;
+    emotionDecayTimer = 6.0;  // Emotion lasts 6 seconds before fading
+    
+    // Update indicator color based on emotion
+    const indicator = document.getElementById('indicator');
+    switch(emotion) {
+        case 'happy':
+            indicator.style.background = '#ffdd00';
+            indicator.style.boxShadow = '0 0 8px #ffdd0088';
+            break;
+        case 'angry':
+            indicator.style.background = '#ff4444';
+            indicator.style.boxShadow = '0 0 8px #ff444488';
+            break;
+        case 'sad':
+            indicator.style.background = '#6688ff';
+            indicator.style.boxShadow = '0 0 8px #6688ff88';
+            break;
+        case 'surprised':
+            indicator.style.background = '#ff88ff';
+            indicator.style.boxShadow = '0 0 8px #ff88ff88';
+            break;
+        case 'relaxed':
+            indicator.style.background = '#88ffcc';
+            indicator.style.boxShadow = '0 0 8px #88ffcc88';
+            break;
+        default:
+            indicator.style.background = '#00ff88';
+            indicator.style.boxShadow = '0 0 8px #00ff8888';
+    }
+};
+
+window.setStatusText = function(text) {
+    const el = document.getElementById('status');
+    if (el) el.textContent = text || '';
+};
+
+// === START ===
+init();
+
+// === DRAG WINDOW (top bar) ===
+let isDragging = false, dragX = 0, dragY = 0;
+const dragBar = document.getElementById('drag-bar');
+dragBar.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    dragX = e.screenX - window.screenX;
+    dragY = e.screenY - window.screenY;
+});
+document.addEventListener('mousemove', (e) => {
+    if (isDragging) {
+        document.title = 'DRAG:' + (e.screenX - dragX) + ':' + (e.screenY - dragY);
+    }
+});
+document.addEventListener('mouseup', () => { isDragging = false; });
+
+// === CLICK TO SPEAK (click anywhere on avatar = mic trigger) ===
+document.addEventListener('click', (e) => {
+    // Ignore clicks on drag bar
+    if (e.target === dragBar || dragBar.contains(e.target)) return;
+    // Signal Python via title change
+    document.title = 'MIC_CLICK';
+    // Reset title after short delay so it can be triggered again
+    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
+});
+
+</script>
+</body>
+</html>

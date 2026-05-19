@@ -1,6 +1,9 @@
 """
 Shweta AI Desktop Assistant — Main Entry Point.
-A voice-controlled AI desktop assistant with animated UI.
+A voice-controlled AI desktop assistant with animated 3D avatar UI.
+
+UI: PyQt5 AvatarWindow (3D VRM avatar with lip sync)
+Old Tkinter UI is commented out below for easy rollback.
 """
 
 import logging
@@ -17,8 +20,16 @@ from assistant.voice_input import VoiceInput
 from assistant.voice_output import VoiceOutput
 from assistant.ai_brain import AIBrain
 from assistant.desktop_control import DesktopController
-from assistant.ui import AssistantUI
 from assistant.channels.telegram_bot import ShwetaTelegramBot
+
+# --- OLD TKINTER UI (commented out — kept for easy rollback) ---
+# from assistant.ui import AssistantUI
+# To revert: uncomment above, comment out AvatarWindow import below,
+# and replace all AvatarWindow usage with AssistantUI in ShwetaAssistant.
+
+# --- NEW PyQt5 Avatar UI ---
+sys.path.insert(0, str(Path(__file__).parent / "assistant" / "ui"))
+from avatar_window import AvatarWindow
 
 # Configure logging
 logging.basicConfig(
@@ -50,8 +61,11 @@ class ShwetaAssistant:
             on_timer_complete=self._on_timer_complete
         )
 
-        # Initialize UI (must be on main thread)
-        self.ui = AssistantUI(on_mic_click=self._on_mic_click)
+        # Initialize PyQt5 Avatar UI (main thread)
+        self.ui = AvatarWindow(on_mic_click=self._on_mic_click)
+
+        # Connect lip sync: voice_output → avatar
+        self.voice_output.set_lip_sync_callback(self._on_lip_sync)
 
         # Set mic button state based on microphone availability
         if not self.voice_input.is_available:
@@ -66,27 +80,36 @@ class ShwetaAssistant:
         # Register global hotkeys
         self._register_hotkeys()
 
-        # Wake word disabled — conflicts with mic recording
-        # Use Ctrl+Shift+A hotkey or mic button instead
+        # Wake word — separate process, no mic conflict
+        self._start_wake_word()
 
         # Start Telegram bot (background)
         self._start_telegram_bot()
 
-        # Start command queue processor
-        self._start_queue_processor()
+        # Connect health reminders to voice
+        self.desktop_control.health.speak = lambda text: self.voice_output.speak(text)
 
-        # Greet user on startup (instant — no delay)
-        self.ui.root.after(300, self._greet)
+        # Connect language manager to voice output
+        self.desktop_control.language  # initialized
 
-    def _greet(self) -> None:
-        """Play startup greeting with Edge TTS (natural voice)."""
+        # Greet user on startup (short delay for UI to render)
+        QTimer_singleshot_greet = threading.Timer(1.0, self._greet_threadsafe)
+        QTimer_singleshot_greet.daemon = True
+        QTimer_singleshot_greet.start()
+
+    def _greet_threadsafe(self) -> None:
+        """Greet from background thread (uses schedule for UI updates)."""
         greeting = f"Namaste! Main {ASSISTANT_NAME} hoon."
-        self.ui.set_text(greeting)
-        self.ui.set_state(AssistantUI.STATE_SPEAKING)
+        self.ui.schedule(self.ui.set_text, greeting)
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
         self.voice_output.speak(
             greeting,
-            callback=lambda: self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
+            callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
         )
+
+    def _on_lip_sync(self, volume: float) -> None:
+        """Callback from voice_output with audio volume for lip sync."""
+        self.ui.schedule(self.ui.set_lip_sync, volume)
 
     def _on_mic_click(self) -> None:
         """Handle mic click — if stuck in thinking/speaking, reset. Otherwise start listening."""
@@ -95,8 +118,8 @@ class ShwetaAssistant:
             self._is_processing = False
             self._is_listening = False
             self.voice_output.stop()
-            self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
-            self.ui.schedule(self.ui.set_text, "Reset! Mic click karke phir bolo.")
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+            self.ui.schedule(self.ui.set_text, "Reset! Click again to speak.")
             logger.info("User reset — back to idle.")
             return
 
@@ -107,20 +130,26 @@ class ShwetaAssistant:
     def _listen_and_process(self) -> None:
         """Listen for voice input and process it (runs in background thread)."""
         self._is_listening = True
-        self.ui.schedule(self.ui.set_state, AssistantUI.STATE_LISTENING)
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_LISTENING)
 
-        # Listen for speech
-        text = self.voice_input.listen()
+        # Listen with VAD callbacks
+        def on_listening():
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_LISTENING)
+
+        def on_processing():
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
+
+        text = self.voice_input.listen(on_listening=on_listening, on_processing=on_processing)
 
         self._is_listening = False
 
         if not text:
             # No speech detected
-            self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
             self.ui.schedule(self.ui.set_text, "Samajh nahi aaya, phir se boliye...")
             self.voice_output.speak(
                 "Samajh nahi aaya, phir se boliye.",
-                callback=lambda: self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
+                callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
             )
             return
 
@@ -138,7 +167,7 @@ class ShwetaAssistant:
             text: Recognized speech text.
         """
         self._is_processing = True
-        self.ui.schedule(self.ui.set_state, AssistantUI.STATE_THINKING)
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
 
         # Check for special commands
         if self._handle_special_commands(text):
@@ -151,6 +180,29 @@ class ShwetaAssistant:
         action = response.get("action", "none")
         params = response.get("params", {})
         reply = response.get("reply", "")
+        emotion = response.get("emotion", "neutral")
+
+        # FALLBACK: If AI promised to play music in reply but didn't send action
+        if (action == "none" or not action) and reply:
+            reply_lower = reply.lower()
+            music_promises = ["music", "song", "gana", "bajati", "lagati", "play karti", "sunati"]
+            if any(word in reply_lower for word in music_promises):
+                # AI promised music but forgot action — auto-fix
+                action = "play_youtube"
+                # Try to extract what kind of music from reply
+                if "calm" in reply_lower or "relax" in reply_lower or "shant" in reply_lower:
+                    params = {"query": "calming relaxing music"}
+                elif "happy" in reply_lower or "khush" in reply_lower:
+                    params = {"query": "happy feel good hindi songs"}
+                elif "sad" in reply_lower or "dukh" in reply_lower:
+                    params = {"query": "sad hindi songs"}
+                else:
+                    params = {"query": "calming relaxing lofi music"}
+                logger.info(f"[FALLBACK] AI promised music but no action — auto-playing: {params['query']}")
+
+        # Set avatar emotion based on AI response
+        if emotion:
+            self.ui.schedule(self.ui.set_emotion, emotion, 0.8 if emotion != "neutral" else 0.0)
 
         # First execute action, THEN speak (so action completes before voice)
         action_message = ""
@@ -164,7 +216,7 @@ class ShwetaAssistant:
                 # Handle confirmation-needed actions
                 if result.get("status") == "confirm_needed":
                     self.ui.schedule(self.ui.set_text, result["message"])
-                    self.ui.schedule(self.ui.set_state, AssistantUI.STATE_SPEAKING)
+                    self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
                     self.voice_output.speak(result["message"], callback=self._on_speaking_done)
                     # Store pending action for confirmation
                     self._pending_confirm = {"action": action, "params": params}
@@ -176,16 +228,12 @@ class ShwetaAssistant:
                     action_message = result["message"]
 
         # Use action result as reply if it has useful data (prices, weather, etc.)
-        # Make it sound natural by combining AI reply + data
         info_actions = ["get_crypto_price", "get_stock_market", "get_news", "get_gold_price",
                         "get_weather", "get_battery", "get_ram_usage", "get_storage",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
                         "get_date", "list_files", "search_file", "list_notes", "daily_briefing"]
         if action in info_actions and action_message:
-            # Make it sound human — short natural sentence
-            # Remove emojis and format naturally
             clean_msg = action_message.replace("📈", "").replace("📉", "").replace("🥇", "").replace("🥈", "").replace("🔋", "").replace("💾", "").replace("🖥️", "").replace("💿", "").replace("📝", "").replace("🕐", "").replace("🌤", "").strip()
-            # Keep it short for TTS
             if len(clean_msg) > 150:
                 clean_msg = clean_msg[:150]
             reply = clean_msg
@@ -193,16 +241,16 @@ class ShwetaAssistant:
         # Now speak the reply (action already done)
         if reply:
             self.ui.schedule(self.ui.set_text, f"💬 {reply}")
-            self.ui.schedule(self.ui.set_state, AssistantUI.STATE_SPEAKING)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
             self.voice_output.speak(reply, callback=self._on_speaking_done)
         else:
             self._is_processing = False
-            self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
 
     def _on_speaking_done(self) -> None:
         """Callback when TTS finishes speaking."""
         self._is_processing = False
-        self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
 
     def _handle_special_commands(self, text: str) -> bool:
         """
@@ -248,10 +296,10 @@ class ShwetaAssistant:
             if phrase in text_lower:
                 farewell = "Alvida! Phir milenge. Apna khayal rakhiye!"
                 self.ui.schedule(self.ui.set_text, farewell)
-                self.ui.schedule(self.ui.set_state, AssistantUI.STATE_SPEAKING)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
                 self.voice_output.speak(
                     farewell,
-                    callback=lambda: self.ui.schedule(self.ui.root.quit)
+                    callback=lambda: self.ui.schedule(self.ui._close)
                 )
                 return True
 
@@ -266,10 +314,10 @@ class ShwetaAssistant:
             message: The timer message.
         """
         self.ui.schedule(self.ui.set_text, f"⏰ {message}")
-        self.ui.schedule(self.ui.set_state, AssistantUI.STATE_SPEAKING)
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
         self.voice_output.speak(
             message,
-            callback=lambda: self.ui.schedule(self.ui.set_state, AssistantUI.STATE_IDLE)
+            callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
         )
 
     def _start_telegram_bot(self) -> None:
@@ -305,7 +353,7 @@ class ShwetaAssistant:
             )
             keyboard.add_hotkey(
                 "ctrl+shift+q",
-                lambda: self.ui.schedule(self.ui.root.quit),
+                lambda: self.ui.schedule(self.ui._close),
                 suppress=False
             )
             logger.info("Global hotkeys registered: Ctrl+Shift+A (listen), Ctrl+Shift+Q (quit)")
@@ -315,34 +363,31 @@ class ShwetaAssistant:
             logger.warning(f"Failed to register hotkeys: {e}")
 
     def _start_wake_word(self) -> None:
-        """Start wake word detection in background."""
+        """Start wake word detection in separate process (no mic conflict)."""
         try:
-            from assistant.skills.wakeword import WakeWordDetector
-            self._wake_detector = WakeWordDetector(on_wake=self._on_mic_click)
-            self._wake_detector.start()
+            from assistant.skills.wakeword import WakeWordManager
+
+            def on_wake():
+                # Trigger listen flow (same as mic button click)
+                self._on_mic_click()
+
+            self._wake_manager = WakeWordManager(
+                on_wake_callback=on_wake,
+                sensitivity=0.5
+            )
+            self._wake_manager.start()
         except Exception as e:
-            logger.warning(f"Wake word detection not available: {e}")
-
-    def _start_queue_processor(self) -> None:
-        """Start processing the command queue on the UI thread."""
-        def process():
-            try:
-                while not self.command_queue.empty():
-                    func, args = self.command_queue.get_nowait()
-                    func(*args)
-            except queue.Empty:
-                pass
-            self.ui.root.after(100, process)
-
-        self.ui.root.after(100, process)
+            logger.warning(f"Wake word not available: {e}")
 
     def run(self) -> None:
-        """Start the assistant (blocks on UI main loop)."""
+        """Start the assistant (blocks on PyQt5 main loop)."""
         logger.info(f"{ASSISTANT_NAME} is ready!")
         self.ui.run()
 
         # Cleanup on exit
         self.desktop_control.timer_manager.cancel_all()
+        if hasattr(self, '_wake_manager'):
+            self._wake_manager.stop()
         logger.info(f"{ASSISTANT_NAME} shut down.")
 
 

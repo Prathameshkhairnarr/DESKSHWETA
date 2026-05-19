@@ -1,11 +1,12 @@
 """
 AI Brain Module for Shweta AI Desktop Assistant.
-Multi-provider support: Groq (primary, fast, 14400/day) + Gemini (fallback).
-Automatically rotates if one provider hits rate limit.
+Multi-provider support with ProviderHealthCache for smart failover.
+Groq (primary) → Gemini (fallback 1) → GitHub Models (fallback 2).
 """
 
 import json
 import logging
+import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -22,8 +23,125 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# NEW: ProviderHealthCache — Smart provider failover
+# ============================================================
+
+class ProviderHealthCache:
+    """
+    Tracks provider health to avoid wasting time on rate-limited providers.
+    
+    Cooldown rules:
+    - 429 Rate Limit → skip for 5 minutes
+    - Connection/timeout error → skip for 30 seconds
+    - Other errors → skip for 10 seconds
+    """
+
+    # Cooldown durations in seconds
+    COOLDOWNS = {
+        "rate_limit": 300,    # 5 minutes
+        "connection": 30,     # 30 seconds
+        "other": 10,          # 10 seconds
+    }
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._failures: Dict[str, Dict] = {}
+        # {provider_name: {"error_type": str, "failed_at": float, "cooldown": int}}
+        self._last_success: Dict[str, float] = {}
+
+    def mark_failed(self, provider_name: str, error_type: str) -> None:
+        """Record a provider failure with appropriate cooldown."""
+        cooldown = self.COOLDOWNS.get(error_type, self.COOLDOWNS["other"])
+        with self._lock:
+            self._failures[provider_name] = {
+                "error_type": error_type,
+                "failed_at": time.time(),
+                "cooldown": cooldown,
+            }
+
+    def mark_success(self, provider_name: str) -> None:
+        """Reset failure state on success."""
+        with self._lock:
+            self._failures.pop(provider_name, None)
+            self._last_success[provider_name] = time.time()
+
+    def is_available(self, provider_name: str) -> bool:
+        """Check if provider is available (not in cooldown)."""
+        with self._lock:
+            failure = self._failures.get(provider_name)
+            if failure is None:
+                return True
+            elapsed = time.time() - failure["failed_at"]
+            if elapsed >= failure["cooldown"]:
+                # Cooldown expired — provider is available again
+                del self._failures[provider_name]
+                return True
+            return False
+
+    def get_ordered_providers(self, provider_names: List[str]) -> List[str]:
+        """
+        Return providers sorted: available first, then by last success time.
+        Unavailable providers go to the end.
+        """
+        with self._lock:
+            available = []
+            unavailable = []
+
+            for name in provider_names:
+                failure = self._failures.get(name)
+                if failure is None:
+                    available.append(name)
+                else:
+                    elapsed = time.time() - failure["failed_at"]
+                    if elapsed >= failure["cooldown"]:
+                        del self._failures[name]
+                        available.append(name)
+                    else:
+                        unavailable.append(name)
+
+            # Sort available by last success (most recent first)
+            available.sort(
+                key=lambda n: self._last_success.get(n, 0),
+                reverse=True
+            )
+
+            return available + unavailable
+
+    def get_remaining_cooldown(self, provider_name: str) -> int:
+        """Get remaining cooldown seconds for a provider."""
+        with self._lock:
+            failure = self._failures.get(provider_name)
+            if failure is None:
+                return 0
+            remaining = failure["cooldown"] - (time.time() - failure["failed_at"])
+            return max(0, int(remaining))
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current health status of all providers (for debugging)."""
+        with self._lock:
+            status = {}
+            for name, failure in self._failures.items():
+                elapsed = time.time() - failure["failed_at"]
+                remaining = failure["cooldown"] - elapsed
+                status[name] = {
+                    "available": remaining <= 0,
+                    "error_type": failure["error_type"],
+                    "retry_in_sec": max(0, int(remaining)),
+                }
+            return status
+
+
+# Module-level singleton
+_provider_cache = ProviderHealthCache()
+
+# ============================================================
+# END NEW
+# ============================================================
+
+
 class AIBrain:
-    """Multi-provider AI brain — Groq (primary) + Gemini (fallback)."""
+    """Multi-provider AI brain with smart health-based failover."""
 
     def __init__(self) -> None:
         """Initialize AI providers."""
@@ -55,7 +173,7 @@ class AIBrain:
             logger.warning(f"Groq init failed: {e}")
 
     def _init_gemini(self) -> None:
-        """Initialize Gemini client (fallback)."""
+        """Initialize Gemini client (fallback 1)."""
         if not GEMINI_API_KEY:
             return
         try:
@@ -67,7 +185,7 @@ class AIBrain:
             logger.warning(f"Gemini init failed: {e}")
 
     def _init_github(self) -> None:
-        """Initialize GitHub Models (fallback 2 — uses OpenAI-compatible API)."""
+        """Initialize GitHub Models (fallback 2)."""
         if not GITHUB_TOKEN:
             return
         try:
@@ -80,13 +198,7 @@ class AIBrain:
     def think(self, user_input: str) -> Dict[str, Any]:
         """
         Send user input to AI and get structured response.
-        Tries Groq first (faster), falls back to Gemini.
-
-        Args:
-            user_input: The user's spoken text.
-
-        Returns:
-            Dictionary with 'action', 'params', and 'reply' keys.
+        Uses ProviderHealthCache for smart provider selection.
         """
         if not self._providers_available:
             return {
@@ -101,20 +213,37 @@ class AIBrain:
         if len(self.conversation_history) > CONVERSATION_HISTORY_LIMIT * 2:
             self.conversation_history = self.conversation_history[-(CONVERSATION_HISTORY_LIMIT * 2):]
 
-        # Try providers in order
+        # === NEW: Get providers in health-sorted order ===
+        ordered = _provider_cache.get_ordered_providers(self._providers_available)
+
+        # Check if ALL providers are unavailable — if so, try them all anyway
+        all_unavailable = all(
+            not _provider_cache.is_available(p) for p in self._providers_available
+        )
+
         response_text = None
 
-        # Try Groq first (fast, high limit)
-        if self._groq_client:
-            response_text = self._call_groq()
+        for provider in ordered:
+            # Skip unavailable providers (unless all are down)
+            if not all_unavailable and not _provider_cache.is_available(provider):
+                remaining = _provider_cache.get_remaining_cooldown(provider)
+                mins = remaining // 60
+                secs = remaining % 60
+                logger.info(f"[AI] Skipping {provider} — rate limited, retry in {mins}m {secs}s")
+                continue
 
-        # Fallback to Gemini
-        if response_text is None and self._gemini_client:
-            response_text = self._call_gemini()
+            # Try this provider
+            if provider == "groq" and self._groq_client:
+                response_text = self._call_groq()
+            elif provider == "gemini" and self._gemini_client:
+                response_text = self._call_gemini()
+            elif provider == "github" and self._github_available:
+                response_text = self._call_github()
 
-        # Fallback to GitHub Models
-        if response_text is None and self._github_available:
-            response_text = self._call_github()
+            if response_text is not None:
+                # === NEW: Mark success ===
+                _provider_cache.mark_success(provider)
+                break
 
         if response_text is None:
             return {
@@ -133,15 +262,18 @@ class AIBrain:
     def _call_groq(self) -> Optional[str]:
         """Call Groq API with llama model."""
         try:
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-            # Only send last 6 messages (less tokens = faster)
+            # Build dynamic system prompt with personality + memory
+            from assistant.skills.personality import PersonalityManager, MemoryStore
+            dynamic_prompt = SYSTEM_PROMPT
+
+            messages = [{"role": "system", "content": dynamic_prompt}]
             messages.extend(self.conversation_history[-6:])
 
             response = self._groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=messages,
                 temperature=0.7,
-                max_tokens=256,  # Shorter replies = faster
+                max_tokens=256,
             )
 
             text = response.choices[0].message.content.strip()
@@ -150,9 +282,15 @@ class AIBrain:
 
         except Exception as e:
             error_str = str(e)
+            # === NEW: Classify error and mark in cache ===
             if "429" in error_str or "rate_limit" in error_str.lower():
-                logger.warning("Groq rate limited, trying fallback...")
+                _provider_cache.mark_failed("groq", "rate_limit")
+                logger.warning("Groq rate limited → cached for 5 min.")
+            elif "timeout" in error_str.lower() or "connection" in error_str.lower():
+                _provider_cache.mark_failed("groq", "connection")
+                logger.warning("Groq connection error → cached for 30s.")
             else:
+                _provider_cache.mark_failed("groq", "other")
                 logger.error(f"Groq error: {e}")
             return None
 
@@ -161,7 +299,6 @@ class AIBrain:
         try:
             from google.genai import types
 
-            # Convert history to Gemini format
             gemini_history = []
             for msg in self.conversation_history:
                 role = "user" if msg["role"] == "user" else "model"
@@ -186,9 +323,14 @@ class AIBrain:
 
         except Exception as e:
             error_str = str(e)
+            # === NEW: Classify error and mark in cache ===
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                logger.warning("Gemini rate limited.")
+                _provider_cache.mark_failed("gemini", "rate_limit")
+                logger.warning("Gemini rate limited → cached for 5 min.")
+            elif "timeout" in error_str.lower() or "connection" in error_str.lower():
+                _provider_cache.mark_failed("gemini", "connection")
             else:
+                _provider_cache.mark_failed("gemini", "other")
                 logger.error(f"Gemini error: {e}")
             return None
 
@@ -224,11 +366,22 @@ class AIBrain:
                 text = data["choices"][0]["message"]["content"].strip()
                 logger.info(f"GitHub Models response: {text[:100]}...")
                 return text
+            elif response.status_code == 429:
+                # === NEW: Mark rate limit ===
+                _provider_cache.mark_failed("github", "rate_limit")
+                logger.warning("GitHub Models rate limited → cached for 5 min.")
+                return None
             else:
+                _provider_cache.mark_failed("github", "other")
                 logger.warning(f"GitHub Models HTTP {response.status_code}")
                 return None
 
+        except requests.Timeout:
+            _provider_cache.mark_failed("github", "connection")
+            logger.error("GitHub Models timeout.")
+            return None
         except Exception as e:
+            _provider_cache.mark_failed("github", "other")
             logger.error(f"GitHub Models error: {e}")
             return None
 
@@ -242,24 +395,92 @@ class AIBrain:
 
             data = json.loads(cleaned)
 
-            # Standard format: {"action": "x", "params": {...}, "reply": "..."}
             action = data.get("action", "none")
             params = data.get("params", {})
             reply = data.get("reply", "")
 
             # Handle GitHub Models format where params are at top level
-            # e.g., {"action": "play_youtube", "query": "song name", "reply": "..."}
             if not params:
-                # Collect all keys that aren't action/reply/params as params
-                extra_keys = {k: v for k, v in data.items() if k not in ("action", "reply", "params")}
+                extra_keys = {k: v for k, v in data.items() if k not in ("action", "reply", "params", "emotion")}
                 if extra_keys:
                     params = extra_keys
 
-            return {"action": action, "params": params, "reply": reply}
+            # Detect emotion from reply text (or use AI-provided emotion if present)
+            emotion = data.get("emotion", None)
+            if not emotion:
+                emotion = self._detect_emotion(reply)
+
+            return {"action": action, "params": params, "reply": reply, "emotion": emotion}
 
         except json.JSONDecodeError:
             logger.warning(f"JSON parse failed: {text[:80]}")
-            return {"action": "none", "params": {}, "reply": text}
+            emotion = self._detect_emotion(text)
+            return {"action": "none", "params": {}, "reply": text, "emotion": emotion}
+
+    def _detect_emotion(self, text: str) -> str:
+        """
+        Detect emotion from reply text using keyword matching.
+        Returns: happy, angry, sad, surprised, relaxed, neutral
+        """
+        text_lower = text.lower()
+
+        # Happy indicators
+        happy_words = [
+            "haha", "😄", "😊", "🎉", "maza", "khushi", "great", "awesome",
+            "bilkul", "zaroor", "done", "ho gaya", "kar diya", "enjoy",
+            "badhai", "congratulations", "yay", "woohoo", "accha", "shandaar",
+            "mast", "badhiya", "kamaal", "fantastic", "wonderful", "perfect",
+            "chalo", "ready", "lag gaya", "set hai"
+        ]
+        
+        # Angry indicators
+        angry_words = [
+            "error", "problem", "gadbad", "kharab", "fail",
+            "nahi kar sakta", "not possible", "restricted", "blocked",
+            "band karo", "hatao", "chup", "gussa", "allowed nahi",
+            "permission denied", "access denied"
+        ]
+        
+        # Sad indicators — expanded significantly
+        sad_words = [
+            "sorry", "maaf", "dukh", "sad", "nahi mila", "nahi mil",
+            "unsuccessful", "couldn't", "unable", "afsos", "galti",
+            "khed", "unfortunately", "udaas", "dukhi", "miss", "bura laga",
+            "nahi ho paya", "nahi hua", "fail ho gaya", "kho gaya",
+            "nahi kar payi", "nahi kar paya", "mushkil", "pareshan",
+            "takleef", "dard", "rona", "cry", "feeling low", "upset",
+            "disappointed", "regret", "lost", "alone", "akela"
+        ]
+        
+        # Surprised indicators
+        surprised_words = [
+            "wow", "arrey", "oh", "kya baat", "amazing", "unbelievable",
+            "seriously", "sach mein", "really", "whoa", "damn", "OMG",
+            "are wah", "arre", "oho", "interesting"
+        ]
+        
+        # Relaxed indicators
+        relaxed_words = [
+            "chill", "relax", "aaram", "theek", "sab theek", "no worries",
+            "koi baat nahi", "tension mat", "shanti", "calm", "easy",
+            "dhire dhire", "koi nahi"
+        ]
+
+        # Count matches (weighted — longer phrases get more weight)
+        scores = {
+            "happy": sum(1.5 if len(w) > 5 else 1 for w in happy_words if w in text_lower),
+            "angry": sum(1.5 if len(w) > 5 else 1 for w in angry_words if w in text_lower),
+            "sad": sum(1.5 if len(w) > 5 else 1 for w in sad_words if w in text_lower),
+            "surprised": sum(1.5 if len(w) > 5 else 1 for w in surprised_words if w in text_lower),
+            "relaxed": sum(1.5 if len(w) > 5 else 1 for w in relaxed_words if w in text_lower),
+        }
+
+        # Get highest scoring emotion
+        max_emotion = max(scores, key=scores.get)
+        if scores[max_emotion] >= 1:
+            return max_emotion
+        
+        return "neutral"
 
     def clear_history(self) -> None:
         """Clear conversation history."""

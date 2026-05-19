@@ -63,11 +63,20 @@ def open_website(url: str) -> Dict[str, str]:
 
 
 def play_youtube(query: str) -> Dict[str, str]:
-    """Play first YouTube video for a search query."""
+    """
+    Play first YouTube video for a search query.
+    Fetches YouTube search page, extracts first video ID, opens directly.
+
+    Args:
+        query: Video search query.
+
+    Returns:
+        Result dictionary with status and message.
+    """
     try:
         encoded_query = urllib.parse.quote_plus(query)
 
-        # Fetch YouTube search page and extract first video ID
+        # Try to get the first video URL using YouTube's search page
         try:
             search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
             headers = {
@@ -79,17 +88,19 @@ def play_youtube(query: str) -> Dict[str, str]:
                 video_id = match.group(1)
                 play_url = f"https://www.youtube.com/watch?v={video_id}"
                 _open_url(play_url)
-                logger.info(f"Playing video: {play_url}")
+                logger.info(f"Playing first video: {play_url}")
                 return {"status": "success", "message": f"Playing: {query}"}
         except Exception as e:
-            logger.warning(f"Direct video fetch failed: {e}")
+            logger.warning(f"Direct video fetch failed, opening search: {e}")
 
-        # Fallback: open search
-        url = f"https://www.youtube.com/results?search_query={encoded_query}"
+        # Fallback: just open search results
+        url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAQ%3D%3D"
         _open_url(url)
+        logger.info(f"YouTube search opened: {query}")
         return {"status": "success", "message": f"YouTube search opened for: {query}"}
 
     except Exception as e:
+        logger.error(f"Failed to play YouTube: {e}")
         return {"status": "error", "message": str(e)}
 
 
@@ -322,53 +333,4 @@ def browser_refresh() -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
-def play_youtube(query: str) -> Dict[str, str]:
-    """
-    Play first YouTube video for a search query.
-    Uses YouTube's built-in redirect that auto-plays the first search result.
 
-    Args:
-        query: Video search query.
-
-    Returns:
-        Result dictionary with status and message.
-    """
-    try:
-        encoded_query = urllib.parse.quote_plus(query)
-
-        # This URL format tells YouTube to redirect to the first video result
-        # It's the same as clicking "I'm Feeling Lucky" on YouTube
-        url = (
-            f"https://www.youtube.com/results"
-            f"?search_query={encoded_query}"
-            f"&sp=EgIQAQ%3D%3D"  # Filter: Videos only
-        )
-
-        # Try to get the first video URL using YouTube's search page
-        try:
-            import requests as req
-            search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-            resp = req.get(search_url, headers=headers, timeout=8)
-            # Find first video ID in the response
-            import re
-            match = re.search(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
-            if match:
-                video_id = match.group(1)
-                play_url = f"https://www.youtube.com/watch?v={video_id}"
-                webbrowser.open(play_url)
-                logger.info(f"Playing first video: {play_url}")
-                return {"status": "success", "message": f"Playing: {query}"}
-        except Exception as e:
-            logger.warning(f"Direct video fetch failed, opening search: {e}")
-
-        # Fallback: just open search results
-        webbrowser.open(url)
-        logger.info(f"YouTube search opened: {query}")
-        return {"status": "success", "message": f"YouTube search opened for: {query}"}
-
-    except Exception as e:
-        logger.error(f"Failed to play YouTube: {e}")
-        return {"status": "error", "message": str(e)}
