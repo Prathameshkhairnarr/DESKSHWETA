@@ -41,7 +41,7 @@ canvas { display: block; }
 <!-- Three.js r137 + three-vrm v1.0.0 -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@1.0.0/lib/three-vrm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@1.0.9/lib/three-vrm.js"></script>
 
 <script>
 // === GLOBALS ===
@@ -107,9 +107,20 @@ function init() {
                 // Scale X by -1 = mirror = face visible from camera
                 vrm.scene.scale.x = -1;
                 
-                // Fix T-pose — rotate arms down using normalized bones
-                // VRM 1.0 uses normalized bone hierarchy
-                setTimeout(() => { console.log('VRM ready'); }, 500);
+                // Check spring bones (hair physics)
+                if (vrm.springBoneManager) {
+                    const joints = vrm.springBoneManager.joints || [];
+                    console.log('Spring Bones found:', joints.length, 'joints');
+                    // Apply gravity for natural hair fall
+                    joints.forEach(joint => {
+                        if (joint.settings) {
+                            joint.settings.gravityDir = new THREE.Vector3(0, -1, 0);
+                            joint.settings.gravityPower = 0.1;
+                        }
+                    });
+                } else {
+                    console.log('No springBoneManager — hair physics not available in this model.');
+                }
 
                 console.log('VRM loaded!');
             } else {
@@ -154,6 +165,13 @@ function animate() {
         const spine = vrm.humanoid.getRawBoneNode('spine') || vrm.humanoid.getBoneNode('spine');
         if (spine) {
             spine.position.y = breathVal;
+        }
+        
+        // Subtle idle body sway (triggers spring bone / hair movement)
+        const neckNode = vrm.humanoid.getBoneNode('neck');
+        if (neckNode && currentState === 'idle') {
+            const idleSway = Math.sin(breathPhase * 0.7) * 0.005;
+            neckNode.rotation.z = THREE.MathUtils.lerp(neckNode.rotation.z, idleSway, delta * 2);
         }
 
         // 2. AUTO BLINKING

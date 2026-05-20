@@ -129,35 +129,43 @@ class ShwetaAssistant:
 
     def _listen_and_process(self) -> None:
         """Listen for voice input and process it (runs in background thread)."""
-        self._is_listening = True
-        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_LISTENING)
-
-        # Listen with VAD callbacks
-        def on_listening():
+        try:
+            self._is_listening = True
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_LISTENING)
 
-        def on_processing():
-            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
+            # Listen with VAD callbacks
+            def on_listening():
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_LISTENING)
 
-        text = self.voice_input.listen(on_listening=on_listening, on_processing=on_processing)
+            def on_processing():
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
 
-        self._is_listening = False
+            text = self.voice_input.listen(on_listening=on_listening, on_processing=on_processing)
 
-        if not text:
-            # No speech detected
+            self._is_listening = False
+
+            if not text:
+                # No speech detected
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+                self.ui.schedule(self.ui.set_text, "Samajh nahi aaya, phir se boliye...")
+                self.voice_output.speak(
+                    "Samajh nahi aaya, phir se boliye.",
+                    callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+                )
+                return
+
+            # Show recognized text
+            self.ui.schedule(self.ui.set_text, f"🗣 {text}")
+
+            # Process with AI
+            self._process_input(text)
+
+        except Exception as e:
+            logger.error(f"Listen/process error: {e}", exc_info=True)
+            self._is_listening = False
+            self._is_processing = False
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
-            self.ui.schedule(self.ui.set_text, "Samajh nahi aaya, phir se boliye...")
-            self.voice_output.speak(
-                "Samajh nahi aaya, phir se boliye.",
-                callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
-            )
-            return
-
-        # Show recognized text
-        self.ui.schedule(self.ui.set_text, f"🗣 {text}")
-
-        # Process with AI
-        self._process_input(text)
+            self.ui.schedule(self.ui.set_text, "Kuch gadbad hui, phir try karo.")
 
     def _process_input(self, text: str) -> None:
         """
@@ -174,31 +182,50 @@ class ShwetaAssistant:
             self._is_processing = False
             return
 
-        # Send to AI brain
-        response = self.ai_brain.think(text)
+        # Send to AI brain (with language detection)
+        response = self.ai_brain.think(text, language_manager=self.desktop_control.language)
 
         action = response.get("action", "none")
         params = response.get("params", {})
         reply = response.get("reply", "")
         emotion = response.get("emotion", "neutral")
 
+        # SAFETY: Ensure params is dict, action is string
+        if not isinstance(params, dict):
+            params = {}
+        if not isinstance(action, str):
+            action = "none"
+        if not isinstance(reply, str):
+            reply = str(reply) if reply else ""
+        if not isinstance(emotion, str):
+            emotion = "neutral"
+
         # FALLBACK: If AI promised to play music in reply but didn't send action
         if (action == "none" or not action) and reply:
             reply_lower = reply.lower()
-            music_promises = ["music", "song", "gana", "bajati", "lagati", "play karti", "sunati"]
+            music_promises = ["music", "song", "gana", "bajati", "lagati", "play karti", "sunati", "playlist"]
             if any(word in reply_lower for word in music_promises):
                 # AI promised music but forgot action — auto-fix
-                action = "play_youtube"
-                # Try to extract what kind of music from reply
-                if "calm" in reply_lower or "relax" in reply_lower or "shant" in reply_lower:
-                    params = {"query": "calming relaxing music"}
-                elif "happy" in reply_lower or "khush" in reply_lower:
-                    params = {"query": "happy feel good hindi songs"}
-                elif "sad" in reply_lower or "dukh" in reply_lower:
-                    params = {"query": "sad hindi songs"}
+                # Use Spotify for mood-based, YouTube for specific songs
+                if any(m in reply_lower for m in ["calm", "relax", "shant", "chill", "lofi"]):
+                    action = "spotify_mood"
+                    params = {"mood": "chill"}
+                elif any(m in reply_lower for m in ["happy", "khush", "upbeat"]):
+                    action = "spotify_mood"
+                    params = {"mood": "happy"}
+                elif any(m in reply_lower for m in ["sad", "dukh", "udaas"]):
+                    action = "spotify_mood"
+                    params = {"mood": "sad"}
+                elif any(m in reply_lower for m in ["coding", "focus", "concentrate"]):
+                    action = "spotify_mood"
+                    params = {"mood": "coding"}
+                elif any(m in reply_lower for m in ["workout", "gym", "exercise"]):
+                    action = "spotify_mood"
+                    params = {"mood": "workout"}
                 else:
-                    params = {"query": "calming relaxing lofi music"}
-                logger.info(f"[FALLBACK] AI promised music but no action — auto-playing: {params['query']}")
+                    action = "spotify_mood"
+                    params = {"mood": "chill"}
+                logger.info(f"[FALLBACK] AI promised music — using spotify_mood: {params['mood']}")
 
         # Set avatar emotion based on AI response
         if emotion:
@@ -242,7 +269,9 @@ class ShwetaAssistant:
         if reply:
             self.ui.schedule(self.ui.set_text, f"💬 {reply}")
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
-            self.voice_output.speak(reply, callback=self._on_speaking_done)
+            # Use correct TTS voice based on detected language
+            current_voice = self.desktop_control.language.get_voice()
+            self.voice_output.speak(reply, voice=current_voice, callback=self._on_speaking_done)
         else:
             self._is_processing = False
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
@@ -327,7 +356,7 @@ class ShwetaAssistant:
                 return self.desktop_control.execute(action, params)
 
             def _ai_jawab(text):
-                return self.ai_brain.think(text)
+                return self.ai_brain.think(text, language_manager=self.desktop_control.language)
 
             def _bolna(text):
                 self.voice_output.speak(text)

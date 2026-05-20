@@ -195,7 +195,7 @@ class AIBrain:
         except Exception as e:
             logger.warning(f"GitHub Models init failed: {e}")
 
-    def think(self, user_input: str) -> Dict[str, Any]:
+    def think(self, user_input: str, language_manager=None) -> Dict[str, Any]:
         """
         Send user input to AI and get structured response.
         Uses ProviderHealthCache for smart provider selection.
@@ -205,6 +205,12 @@ class AIBrain:
                 "action": "none",
                 "reply": "AI brain available nahi hai. API keys check karein."
             }
+
+        # Auto-detect language from user input
+        lang_instruction = ""
+        if language_manager:
+            language_manager.detect_and_set(user_input)
+            lang_instruction = language_manager.get_ai_prompt()
 
         # Add to conversation history
         self.conversation_history.append({"role": "user", "content": user_input})
@@ -234,11 +240,11 @@ class AIBrain:
 
             # Try this provider
             if provider == "groq" and self._groq_client:
-                response_text = self._call_groq()
+                response_text = self._call_groq(lang_instruction)
             elif provider == "gemini" and self._gemini_client:
-                response_text = self._call_gemini()
+                response_text = self._call_gemini(lang_instruction)
             elif provider == "github" and self._github_available:
-                response_text = self._call_github()
+                response_text = self._call_github(lang_instruction)
 
             if response_text is not None:
                 # === NEW: Mark success ===
@@ -259,12 +265,13 @@ class AIBrain:
         self._log_conversation(user_input, result)
         return result
 
-    def _call_groq(self) -> Optional[str]:
+    def _call_groq(self, lang_instruction: str = "") -> Optional[str]:
         """Call Groq API with llama model."""
         try:
-            # Build dynamic system prompt with personality + memory
-            from assistant.skills.personality import PersonalityManager, MemoryStore
+            # Build dynamic system prompt with language instruction
             dynamic_prompt = SYSTEM_PROMPT
+            if lang_instruction:
+                dynamic_prompt += f"\n\nLANGUAGE FOR THIS RESPONSE (MUST FOLLOW): {lang_instruction}"
 
             messages = [{"role": "system", "content": dynamic_prompt}]
             messages.extend(self.conversation_history[-6:])
@@ -294,10 +301,14 @@ class AIBrain:
                 logger.error(f"Groq error: {e}")
             return None
 
-    def _call_gemini(self) -> Optional[str]:
+    def _call_gemini(self, lang_instruction: str = "") -> Optional[str]:
         """Call Gemini API."""
         try:
             from google.genai import types
+
+            dynamic_prompt = SYSTEM_PROMPT
+            if lang_instruction:
+                dynamic_prompt += f"\n\nLANGUAGE FOR THIS RESPONSE (MUST FOLLOW): {lang_instruction}"
 
             gemini_history = []
             for msg in self.conversation_history:
@@ -311,7 +322,7 @@ class AIBrain:
                 model="gemini-2.0-flash-lite",
                 contents=gemini_history,
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
+                    system_instruction=dynamic_prompt,
                     temperature=0.7,
                     max_output_tokens=1024,
                 )
@@ -334,12 +345,16 @@ class AIBrain:
                 logger.error(f"Gemini error: {e}")
             return None
 
-    def _call_github(self) -> Optional[str]:
+    def _call_github(self, lang_instruction: str = "") -> Optional[str]:
         """Call GitHub Models API (OpenAI-compatible endpoint)."""
         try:
             import requests
 
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+            dynamic_prompt = SYSTEM_PROMPT
+            if lang_instruction:
+                dynamic_prompt += f"\n\nLANGUAGE FOR THIS RESPONSE (MUST FOLLOW): {lang_instruction}"
+
+            messages = [{"role": "system", "content": dynamic_prompt}]
             messages.extend(self.conversation_history)
 
             headers = {
@@ -393,11 +408,30 @@ class AIBrain:
                 lines = cleaned.split("\n")
                 cleaned = "\n".join(lines[1:-1])
 
+            # Handle case where AI wraps JSON in extra text
+            # Find first { and last }
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                cleaned = cleaned[start:end + 1]
+
             data = json.loads(cleaned)
 
-            action = data.get("action", "none")
+            # Ensure data is a dict
+            if not isinstance(data, dict):
+                return {"action": "none", "params": {}, "reply": text, "emotion": "neutral"}
+
+            action = data.get("action", "none") or "none"
             params = data.get("params", {})
             reply = data.get("reply", "")
+
+            # Ensure types are correct
+            if not isinstance(action, str):
+                action = "none"
+            if not isinstance(params, dict):
+                params = {}
+            if not isinstance(reply, str):
+                reply = str(reply) if reply else ""
 
             # Handle GitHub Models format where params are at top level
             if not params:
@@ -407,15 +441,18 @@ class AIBrain:
 
             # Detect emotion from reply text (or use AI-provided emotion if present)
             emotion = data.get("emotion", None)
-            if not emotion:
+            if not emotion or not isinstance(emotion, str):
                 emotion = self._detect_emotion(reply)
 
             return {"action": action, "params": params, "reply": reply, "emotion": emotion}
 
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError, TypeError):
             logger.warning(f"JSON parse failed: {text[:80]}")
             emotion = self._detect_emotion(text)
             return {"action": "none", "params": {}, "reply": text, "emotion": emotion}
+        except Exception as e:
+            logger.error(f"Parse response unexpected error: {e}")
+            return {"action": "none", "params": {}, "reply": text, "emotion": "neutral"}
 
     def _detect_emotion(self, text: str) -> str:
         """

@@ -11,8 +11,12 @@ from assistant.skills.timer import TimerManager
 from assistant.skills import files as file_skills
 from assistant.skills import sysinfo, notes, windows, briefing, whatsapp, vision
 from assistant.skills import market as market_skills
+from assistant.skills import spotify as spotify_skills
 from assistant.skills.gesture import GestureController
 from assistant.skills.browser_agent import BrowserAgent
+from assistant.skills.personality import PersonalityManager, MemoryStore, HealthReminders
+from assistant.skills.multilang import LanguageManager
+from assistant.skills.learning import UsageLearner
 from assistant.skills.browser_auto import BrowserAutomation
 
 logger = logging.getLogger(__name__)
@@ -24,15 +28,37 @@ class DesktopController:
     def __init__(self, on_timer_complete: Optional[Callable] = None) -> None:
         """
         Initialize the desktop controller with all skill modules.
+        Each component is initialized safely — if one fails, others still work.
 
         Args:
             on_timer_complete: Callback for when timers complete.
         """
         self.timer_manager = TimerManager(on_timer_complete=on_timer_complete)
-        self.browser_auto = BrowserAutomation()
-        self.gesture = GestureController(on_gesture=self._on_gesture)
-        self.browser_agent = BrowserAgent()
-        self.browser_auto = BrowserAutomation()
+        
+        # Safe initialization — each component can fail independently
+        try:
+            self.browser_auto = BrowserAutomation()
+        except Exception as e:
+            logger.warning(f"BrowserAutomation init failed: {e}")
+            self.browser_auto = None
+
+        try:
+            self.gesture = GestureController(on_gesture=self._on_gesture)
+        except Exception as e:
+            logger.warning(f"GestureController init failed: {e}")
+            self.gesture = None
+
+        try:
+            self.browser_agent = BrowserAgent()
+        except Exception as e:
+            logger.warning(f"BrowserAgent init failed: {e}")
+            self.browser_agent = None
+
+        self.personality = PersonalityManager()
+        self.memory = MemoryStore()
+        self.health = HealthReminders()
+        self.language = LanguageManager()
+        self.learner = UsageLearner()
 
         # Map action names to handler functions
         self._action_map: Dict[str, Callable] = {
@@ -154,6 +180,26 @@ class DesktopController:
             # Browser Agent (autonomous)
             "browser_agent_task": self._browser_agent_task,
             "browser_agent_history": self._browser_agent_history,
+            # Personality & Memory
+            "set_mode": self._set_mode,
+            "remember": self._remember,
+            "get_memory": self._get_memory,
+            "health_reminders_on": self._health_on,
+            "health_reminders_off": self._health_off,
+            # Language
+            "set_language": self._set_language,
+            # Learning
+            "get_usage_stats": self._get_usage_stats,
+            # Spotify
+            "spotify_play_pause": self._spotify_play_pause,
+            "spotify_next": self._spotify_next,
+            "spotify_previous": self._spotify_previous,
+            "spotify_now_playing": self._spotify_now_playing,
+            "spotify_play_song": self._spotify_play_song,
+            "spotify_play_playlist": self._spotify_play_playlist,
+            "spotify_mood": self._spotify_mood,
+            "spotify_volume": self._spotify_volume,
+            "spotify_shuffle": self._spotify_shuffle,
         }
 
     def execute(self, action: str, params: Dict[str, Any]) -> Dict[str, str]:
@@ -170,11 +216,25 @@ class DesktopController:
         if action == "none" or not action:
             return {"status": "no_action", "message": "No action needed."}
 
+        # Ensure params is always a dict (AI sometimes sends None or string)
+        if not isinstance(params, dict):
+            params = {}
+
         handler = self._action_map.get(action)
         if handler:
             try:
                 result = handler(params)
+                # Ensure result is always a dict with status
+                if not isinstance(result, dict):
+                    result = {"status": "success", "message": str(result) if result else "Done."}
+                if "status" not in result:
+                    result["status"] = "success"
                 logger.info(f"Action executed: {action} → {result.get('status')}")
+                # Track usage pattern (safe)
+                try:
+                    self.learner.track(action, str(params.get("query", params.get("goal", ""))))
+                except Exception:
+                    pass
                 return result
             except Exception as e:
                 logger.error(f"Action failed: {action} — {e}")
@@ -215,12 +275,18 @@ class DesktopController:
         return system.get_date()
 
     def _volume_up(self, params: Dict) -> Dict[str, str]:
-        steps = params.get("steps", 5)
-        return system.volume_up(int(steps))
+        try:
+            steps = int(params.get("steps", 5))
+        except (ValueError, TypeError):
+            steps = 5
+        return system.volume_up(min(steps, 10))
 
     def _volume_down(self, params: Dict) -> Dict[str, str]:
-        steps = params.get("steps", 5)
-        return system.volume_down(int(steps))
+        try:
+            steps = int(params.get("steps", 5))
+        except (ValueError, TypeError):
+            steps = 5
+        return system.volume_down(min(steps, 10))
 
     def _volume_mute(self, params: Dict) -> Dict[str, str]:
         return system.volume_mute()
@@ -299,13 +365,19 @@ class DesktopController:
     # --- Timer skill wrappers ---
 
     def _set_timer(self, params: Dict) -> Dict[str, str]:
-        seconds = params.get("seconds", 60)
-        return self.timer_manager.set_timer(int(seconds))
+        try:
+            seconds = int(params.get("seconds", 60))
+        except (ValueError, TypeError):
+            seconds = 60
+        return self.timer_manager.set_timer(max(1, seconds))
 
     def _set_reminder(self, params: Dict) -> Dict[str, str]:
         message = params.get("message", "Reminder!")
-        minutes = params.get("minutes", 5)
-        return self.timer_manager.set_reminder(message, int(minutes))
+        try:
+            minutes = int(params.get("minutes", 5))
+        except (ValueError, TypeError):
+            minutes = 5
+        return self.timer_manager.set_reminder(str(message), max(1, minutes))
 
     def _list_timers(self, params: Dict) -> Dict[str, str]:
         return self.timer_manager.list_timers()
@@ -639,3 +711,74 @@ class DesktopController:
             status = "✅" if h["success"] else "❌"
             lines.append(f"{status} {h['goal'][:50]} ({h['time_taken']})")
         return {"status": "success", "message": "Browser tasks:\n" + "\n".join(lines)}
+
+    # --- Personality, Memory, Health ---
+
+    def _set_mode(self, params: Dict) -> Dict[str, str]:
+        mode = params.get("mode", "fun")
+        return self.personality.set_mode(mode)
+
+    def _remember(self, params: Dict) -> Dict[str, str]:
+        key = params.get("key", "")
+        value = params.get("value", "")
+        if not key or not value:
+            return {"status": "error", "message": "Key and value required."}
+        return self.memory.remember(key, value)
+
+    def _get_memory(self, params: Dict) -> Dict[str, str]:
+        return self.memory.get_all()
+
+    def _health_on(self, params: Dict) -> Dict[str, str]:
+        return self.health.start()
+
+    def _health_off(self, params: Dict) -> Dict[str, str]:
+        return self.health.stop()
+
+    # --- Language ---
+
+    def _set_language(self, params: Dict) -> Dict[str, str]:
+        lang = params.get("language", params.get("lang", "hinglish"))
+        return self.language.set_language(lang)
+
+    # --- Learning ---
+
+    def _get_usage_stats(self, params: Dict) -> Dict[str, str]:
+        return self.learner.get_stats()
+
+    # --- Spotify ---
+
+    def _spotify_play_pause(self, params: Dict) -> Dict[str, str]:
+        return spotify_skills.spotify_play_pause()
+
+    def _spotify_next(self, params: Dict) -> Dict[str, str]:
+        return spotify_skills.spotify_next()
+
+    def _spotify_previous(self, params: Dict) -> Dict[str, str]:
+        return spotify_skills.spotify_previous()
+
+    def _spotify_now_playing(self, params: Dict) -> Dict[str, str]:
+        return spotify_skills.spotify_now_playing()
+
+    def _spotify_play_song(self, params: Dict) -> Dict[str, str]:
+        query = params.get("query", params.get("song", ""))
+        if not query:
+            return {"status": "error", "message": "Song name not provided."}
+        return spotify_skills.spotify_play_song(query)
+
+    def _spotify_play_playlist(self, params: Dict) -> Dict[str, str]:
+        name = params.get("name", params.get("playlist", ""))
+        if not name:
+            return {"status": "error", "message": "Playlist name not provided."}
+        return spotify_skills.spotify_play_playlist(name)
+
+    def _spotify_mood(self, params: Dict) -> Dict[str, str]:
+        mood = params.get("mood", "chill")
+        return spotify_skills.spotify_mood(mood)
+
+    def _spotify_volume(self, params: Dict) -> Dict[str, str]:
+        percent = params.get("percent", 50)
+        return spotify_skills.spotify_volume(int(percent))
+
+    def _spotify_shuffle(self, params: Dict) -> Dict[str, str]:
+        on = params.get("on", True)
+        return spotify_skills.spotify_shuffle(on)
