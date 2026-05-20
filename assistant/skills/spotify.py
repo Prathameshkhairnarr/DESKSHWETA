@@ -289,29 +289,24 @@ def spotify_play_song(query: str) -> Dict[str, str]:
                 try:
                     _sp_client.start_playback(uris=[uri])
                     return {"status": "success", "message": f"Playing: {name} — {artist}"}
-                except Exception as e:
-                    # Premium required for playback — open in app instead
+                except Exception:
+                    # Premium required — open in Spotify app
                     _open_spotify_uri(uri)
+                    time.sleep(2)
                     return {"status": "success", "message": f"Opening: {name} — {artist}"}
             else:
                 return {"status": "error", "message": f"'{query}' nahi mila Spotify pe."}
 
-        # Without API — open Spotify search
-        _ensure_spotify_open()
-        time.sleep(1)
-        if _focus_spotify():
-            pyautogui.hotkey("ctrl", "l")  # Focus search bar
-            time.sleep(0.3)
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.typewrite(query, interval=0.02)
-            pyautogui.press("enter")
-            time.sleep(1.5)
-            pyautogui.press("enter")  # Play first result
-            return {"status": "success", "message": f"Spotify pe searching: {query}"}
-
-        return {"status": "error", "message": "Spotify open nahi ho paya."}
+        # Without API — search on YouTube instead
+        from assistant.skills.browser import play_youtube
+        return play_youtube(query)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        # Final fallback — YouTube
+        try:
+            from assistant.skills.browser import play_youtube
+            return play_youtube(query)
+        except Exception:
+            return {"status": "error", "message": str(e)}
 
 
 def spotify_play_playlist(playlist_name: str) -> Dict[str, str]:
@@ -324,7 +319,7 @@ def spotify_play_playlist(playlist_name: str) -> Dict[str, str]:
         if mood_match:
             return _play_mood_playlist(mood_match)
 
-        # Search for playlist by name
+        # Search for playlist by name via API
         if _init_spotipy() and _sp_client:
             results = _sp_client.search(q=playlist_name, type="playlist", limit=1)
             playlists = results.get("playlists", {}).get("items", [])
@@ -336,19 +331,21 @@ def spotify_play_playlist(playlist_name: str) -> Dict[str, str]:
                     _sp_client.start_playback(context_uri=uri)
                     return {"status": "success", "message": f"Playing playlist: {name}"}
                 except Exception:
+                    # Premium required — open URI in app
                     _open_spotify_uri(uri)
+                    time.sleep(2)
                     return {"status": "success", "message": f"Opening playlist: {name}"}
-            else:
-                return {"status": "error", "message": f"Playlist '{playlist_name}' nahi mili."}
 
-        # Without API — try mood playlist URI
-        if mood_match:
-            _open_spotify_uri(mood_match["uri"])
-            return {"status": "success", "message": f"Opening: {mood_match['name']}"}
-
-        return {"status": "error", "message": "Spotify API keys set karo for playlist search."}
+        # Fallback: play on YouTube
+        from assistant.skills.browser import play_youtube
+        return play_youtube(f"{playlist_name} playlist")
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        # Final fallback — YouTube
+        try:
+            from assistant.skills.browser import play_youtube
+            return play_youtube(f"{playlist_name} playlist")
+        except Exception:
+            return {"status": "error", "message": str(e)}
 
 
 def spotify_mood(mood: str) -> Dict[str, str]:

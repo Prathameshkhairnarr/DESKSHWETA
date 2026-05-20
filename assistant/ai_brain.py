@@ -274,13 +274,13 @@ class AIBrain:
                 dynamic_prompt += f"\n\nLANGUAGE FOR THIS RESPONSE (MUST FOLLOW): {lang_instruction}"
 
             messages = [{"role": "system", "content": dynamic_prompt}]
-            messages.extend(self.conversation_history[-6:])
+            messages.extend(self.conversation_history[-4:])  # Less history = faster
 
             response = self._groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=messages,
-                temperature=0.7,
-                max_tokens=256,
+                temperature=0.6,
+                max_tokens=100,
             )
 
             text = response.choices[0].message.content.strip()
@@ -448,8 +448,18 @@ class AIBrain:
 
         except (json.JSONDecodeError, ValueError, TypeError):
             logger.warning(f"JSON parse failed: {text[:80]}")
-            emotion = self._detect_emotion(text)
-            return {"action": "none", "params": {}, "reply": text, "emotion": emotion}
+            # Try to extract reply from malformed JSON
+            reply_text = text
+            try:
+                import re
+                # Try to find "reply": "..." pattern even in broken JSON
+                match = re.search(r'"reply"\s*:\s*"([^"]*)"', text)
+                if match:
+                    reply_text = match.group(1)
+            except Exception:
+                pass
+            emotion = self._detect_emotion(reply_text)
+            return {"action": "none", "params": {}, "reply": reply_text, "emotion": emotion}
         except Exception as e:
             logger.error(f"Parse response unexpected error: {e}")
             return {"action": "none", "params": {}, "reply": text, "emotion": "neutral"}

@@ -92,8 +92,8 @@ class ShwetaAssistant:
         # Connect language manager to voice output
         self.desktop_control.language  # initialized
 
-        # Greet user on startup (short delay for UI to render)
-        QTimer_singleshot_greet = threading.Timer(1.0, self._greet_threadsafe)
+        # Greet user on startup (wait for avatar to fully load — VRM takes ~3 sec)
+        QTimer_singleshot_greet = threading.Timer(3.0, self._greet_threadsafe)
         QTimer_singleshot_greet.daemon = True
         QTimer_singleshot_greet.start()
 
@@ -231,7 +231,7 @@ class ShwetaAssistant:
         if emotion:
             self.ui.schedule(self.ui.set_emotion, emotion, 0.8 if emotion != "neutral" else 0.0)
 
-        # First execute action, THEN speak (so action completes before voice)
+        # Execute action first (if any)
         action_message = ""
         if action and action != "none":
             if action == "clear_history":
@@ -244,8 +244,8 @@ class ShwetaAssistant:
                 if result.get("status") == "confirm_needed":
                     self.ui.schedule(self.ui.set_text, result["message"])
                     self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
-                    self.voice_output.speak(result["message"], callback=self._on_speaking_done)
-                    # Store pending action for confirmation
+                    current_voice = self.desktop_control.language.get_voice()
+                    self.voice_output.speak(result["message"], voice=current_voice, callback=self._on_speaking_done)
                     self._pending_confirm = {"action": action, "params": params}
                     self._is_processing = False
                     return
@@ -254,7 +254,7 @@ class ShwetaAssistant:
                 if result.get("status") == "success" and result.get("message"):
                     action_message = result["message"]
 
-        # Use action result as reply if it has useful data (prices, weather, etc.)
+        # For info actions: use action result as the spoken reply
         info_actions = ["get_crypto_price", "get_stock_market", "get_news", "get_gold_price",
                         "get_weather", "get_battery", "get_ram_usage", "get_storage",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
@@ -265,11 +265,10 @@ class ShwetaAssistant:
                 clean_msg = clean_msg[:150]
             reply = clean_msg
 
-        # Now speak the reply (action already done)
+        # Speak the reply (once only)
         if reply:
             self.ui.schedule(self.ui.set_text, f"💬 {reply}")
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
-            # Use correct TTS voice based on detected language
             current_voice = self.desktop_control.language.get_voice()
             self.voice_output.speak(reply, voice=current_voice, callback=self._on_speaking_done)
         else:

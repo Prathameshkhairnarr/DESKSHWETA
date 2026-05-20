@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # --- Voice Configuration ---
 VOICE_PRIMARY = "en-IN-NeerjaNeural"
 VOICE_FALLBACK = "hi-IN-SwaraNeural"
-RATE = "+30%"
+RATE = "+50%"
 
 # --- Cache Configuration ---
 CACHE_DIR = PROJECT_ROOT / "cache" / "tts_cache"
@@ -217,13 +217,12 @@ class VoiceOutput:
                 # STEP 1: Check cache (instant playback) — skip cache if custom voice
                 cached_path = _is_cached(text) if not voice else None
                 if cached_path:
-                    logger.debug(f"[TTS Cache] HIT: '{text[:30]}...'")
                     self._play_with_lip_sync(str(cached_path))
                 elif self._edge_available:
-                    # STEP 2: Generate fresh with edge-tts (with language-specific voice)
+                    # STEP 2: Generate fresh with edge-tts
                     self._speak_edge(text, voice)
                 else:
-                    # STEP 3: Offline fallback
+                    # STEP 3: Offline fallback (instant, no network)
                     self._speak_pyttsx3(text)
             except Exception as e:
                 logger.error(f"TTS error: {e}")
@@ -233,7 +232,6 @@ class VoiceOutput:
                     pass
             finally:
                 self.is_speaking = False
-                # Ensure mouth closes
                 if self._lip_sync_callback:
                     try:
                         self._lip_sync_callback(0.0)
@@ -246,28 +244,36 @@ class VoiceOutput:
         """Generate audio with edge-tts and play with lip sync."""
         import edge_tts
 
-        # Build voice priority list: custom voice first, then defaults
-        voices_to_try = []
-        if voice:
-            voices_to_try.append(voice)
-        voices_to_try.extend([VOICE_PRIMARY, VOICE_FALLBACK])
+        # Use specific voice directly — no fallback loop (saves ~500ms)
+        target_voice = voice or VOICE_PRIMARY
 
         tmp_path = tempfile.mktemp(suffix=".mp3")
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Reuse event loop for speed
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    raise RuntimeError
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
             success = False
-            for v in voices_to_try:
+            try:
+                comm = edge_tts.Communicate(text, target_voice, rate=RATE)
+                loop.run_until_complete(comm.save(tmp_path))
+                if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 500:
+                    success = True
+            except Exception:
+                # Only try fallback if primary failed
                 try:
-                    comm = edge_tts.Communicate(text, v, rate=RATE)
+                    fallback = VOICE_FALLBACK if target_voice != VOICE_FALLBACK else VOICE_PRIMARY
+                    comm = edge_tts.Communicate(text, fallback, rate=RATE)
                     loop.run_until_complete(comm.save(tmp_path))
                     if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 500:
                         success = True
-                        logger.info(f"[TTS] Using voice: {v}")
-                        break
                 except Exception:
-                    continue
+                    pass
 
             loop.close()
 
@@ -320,12 +326,10 @@ class VoiceOutput:
 
     def _play_sounddevice_with_lip_sync(self, pcm_data: np.ndarray, sample_rate: int) -> None:
         """
-        Play PCM audio via PowerShell while driving lip sync from actual amplitude.
-        
-        NOTE: We do NOT use sounddevice for playback (it conflicts with mic input).
-        Instead: PowerShell plays the audio, and we analyze pcm_data in parallel for lip sync.
+        Play PCM audio via winsound (instant, no PowerShell overhead) 
+        while driving lip sync from actual amplitude.
         """
-        # Save PCM as temp WAV for PowerShell to play
+        # Save PCM as temp WAV
         tmp_wav = tempfile.mktemp(suffix=".wav")
         try:
             import soundfile as sf
@@ -344,23 +348,28 @@ class VoiceOutput:
             )
             lip_thread.start()
 
-        # Play via PowerShell (does NOT block sounddevice/mic)
+        # Play via winsound (instant start, no PowerShell overhead)
         try:
-            ps_cmd = (
-                f'Add-Type -AssemblyName PresentationCore;'
-                f'$p=New-Object System.Windows.Media.MediaPlayer;'
-                f'$p.Open([Uri]::new("{tmp_wav.replace(chr(92), "/")}"));'
-                f'$p.Play();Start-Sleep -Milliseconds 300;'
-                f'while($p.NaturalDuration.HasTimeSpan -eq $false){{Start-Sleep -Milliseconds 50}};'
-                f'Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds - 100);'
-                f'$p.Close()'
-            )
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True, timeout=30
-            )
-        except Exception as e:
-            logger.error(f"PowerShell WAV play error: {e}")
+            import winsound
+            winsound.PlaySound(tmp_wav, winsound.SND_FILENAME)
+        except Exception:
+            # Fallback to PowerShell if winsound fails
+            try:
+                ps_cmd = (
+                    f'Add-Type -AssemblyName PresentationCore;'
+                    f'$p=New-Object System.Windows.Media.MediaPlayer;'
+                    f'$p.Open([Uri]::new("{tmp_wav.replace(chr(92), "/")}"));'
+                    f'$p.Play();Start-Sleep -Milliseconds 300;'
+                    f'while($p.NaturalDuration.HasTimeSpan -eq $false){{Start-Sleep -Milliseconds 50}};'
+                    f'Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds - 100);'
+                    f'$p.Close()'
+                )
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_cmd],
+                    capture_output=True, timeout=30
+                )
+            except Exception as e:
+                logger.error(f"Playback failed: {e}")
         finally:
             # Ensure lip sync stops
             if self._lip_sync_callback:
