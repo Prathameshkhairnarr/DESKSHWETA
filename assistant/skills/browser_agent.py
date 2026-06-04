@@ -87,8 +87,41 @@ class BrowserAgent:
             # Get page content for summary
             try:
                 await asyncio.sleep(3)  # Wait for page to fully load
-                content = await page.inner_text("body")
-                content = content[:3000]  # More content for better summary
+                url = page.url.lower()
+                content = ""
+                
+                # Try structured extraction for known sites
+                if "amazon" in url:
+                    try:
+                        await page.wait_for_selector('[data-component-type="s-search-result"]', timeout=5000)
+                        items = await page.query_selector_all('[data-component-type="s-search-result"]')
+                        product_lines = []
+                        for item in items[:10]:
+                            try:
+                                title_el = await item.query_selector('h2 a span, h2 span')
+                                price_whole = await item.query_selector('.a-price-whole')
+                                rating_el = await item.query_selector('.a-icon-alt')
+                                title = await title_el.inner_text() if title_el else ""
+                                price = await price_whole.inner_text() if price_whole else "N/A"
+                                rating = await rating_el.inner_text() if rating_el else ""
+                                if title:
+                                    line = f"{title.strip()} - ₹{price.strip()}"
+                                    if rating:
+                                        line += f" ({rating.strip()})"
+                                    product_lines.append(line)
+                            except Exception:
+                                continue
+                        if product_lines:
+                            content = "PRODUCTS FOUND:\n" + "\n".join(product_lines)
+                    except Exception:
+                        pass
+                
+                if not content:
+                    content = await page.inner_text("body")
+                    # Skip navigation junk
+                    if len(content) > 500:
+                        content = content[300:]
+                content = content[:4000]
             except Exception:
                 content = ""
 
@@ -183,13 +216,20 @@ Output ONLY valid JSON array, nothing else."""
         goal_lower = goal.lower()
 
         if "amazon" in goal_lower:
-            query = goal_lower.split("search")[-1].strip() if "search" in goal_lower else "products"
+            # Extract search query from goal
+            query = goal_lower
+            for remove in ["amazon", "search", "find", "best", "top", "list", "on", "india", "in", "under", "ke", "andar", "rupees", "rs", "budget"]:
+                query = query.replace(remove, "")
+            query = " ".join(query.split()).strip() or "headphones"
             return [
                 {"action": "goto", "selector": "https://www.amazon.in", "value": ""},
+                {"action": "wait", "selector": "", "value": "2"},
                 {"action": "type", "selector": "#twotabsearchtextbox", "value": query},
                 {"action": "click", "selector": "#nav-search-submit-button", "value": ""},
                 {"action": "wait", "selector": "", "value": "3"},
                 {"action": "extract", "selector": "", "value": "product names and prices"},
+                {"action": "scroll", "selector": "", "value": ""},
+                {"action": "extract", "selector": "", "value": "more product names and prices"},
             ]
         elif "google" in goal_lower:
             query = goal_lower.replace("google", "").replace("search", "").strip()
@@ -215,14 +255,22 @@ Output ONLY valid JSON array, nothing else."""
 
         elif action == "type":
             try:
+                # Clear existing text first, then fill
+                await page.click(selector, timeout=5000)
+                await page.fill(selector, "", timeout=3000)  # Clear
                 await page.fill(selector, value, timeout=5000)
             except Exception:
-                # Try clicking first then typing
+                # Try clicking first then typing character by character
                 try:
                     await page.click(selector, timeout=5000)
                     await page.keyboard.type(value, delay=50)
                 except Exception:
-                    pass
+                    # Last resort: try Tab to find input and type
+                    try:
+                        await page.keyboard.press("Tab")
+                        await page.keyboard.type(value, delay=50)
+                    except Exception:
+                        pass
 
         elif action == "click":
             try:
@@ -243,21 +291,135 @@ Output ONLY valid JSON array, nothing else."""
 
         elif action == "extract":
             try:
-                text = await page.inner_text("body")
-                return text[:1000]
+                # Try specific selectors for common sites first
+                url = page.url.lower()
+                text = ""
+                
+                # Amazon product results
+                if "amazon" in url:
+                    try:
+                        # Wait for search results to load
+                        await page.wait_for_selector('[data-component-type="s-search-result"]', timeout=5000)
+                        items = await page.query_selector_all('[data-component-type="s-search-result"]')
+                        results = []
+                        for item in items[:10]:  # Top 10 products
+                            try:
+                                title_el = await item.query_selector('h2 a span, h2 span')
+                                price_whole = await item.query_selector('.a-price-whole')
+                                title = await title_el.inner_text() if title_el else ""
+                                price = await price_whole.inner_text() if price_whole else "N/A"
+                                if title:
+                                    results.append(f"{title.strip()} - ₹{price.strip()}")
+                            except Exception:
+                                continue
+                        if results:
+                            text = "\n".join(results)
+                    except Exception:
+                        pass
+                
+                # Flipkart product results
+                if not text and "flipkart" in url:
+                    try:
+                        items = await page.query_selector_all('._1AtVbE, [data-id]')
+                        results = []
+                        for item in items[:10]:
+                            try:
+                                title_el = await item.query_selector('._4rR01T, .s1Q9rs, a[title]')
+                                price_el = await item.query_selector('._30jeq3, ._1_WHN1')
+                                title = await title_el.inner_text() if title_el else ""
+                                price = await price_el.inner_text() if price_el else "N/A"
+                                if title:
+                                    results.append(f"{title.strip()} - {price.strip()}")
+                            except Exception:
+                                continue
+                        if results:
+                            text = "\n".join(results)
+                    except Exception:
+                        pass
+                
+                # Google search results
+                if not text and "google" in url:
+                    try:
+                        items = await page.query_selector_all('#search .g, .tF2Cxc')
+                        results = []
+                        for item in items[:8]:
+                            try:
+                                title_el = await item.query_selector('h3')
+                                snippet_el = await item.query_selector('.VwiC3b, .IsZvec')
+                                title = await title_el.inner_text() if title_el else ""
+                                snippet = await snippet_el.inner_text() if snippet_el else ""
+                                if title:
+                                    results.append(f"{title.strip()}: {snippet.strip()[:100]}")
+                            except Exception:
+                                continue
+                        if results:
+                            text = "\n".join(results)
+                    except Exception:
+                        pass
+                
+                # Fallback: get main content area, skip nav/header/footer
+                if not text:
+                    try:
+                        # Try main content selectors
+                        for selector in ['main', '#content', '#main-content', '[role="main"]', 'article', '.content']:
+                            el = await page.query_selector(selector)
+                            if el:
+                                text = await el.inner_text()
+                                if len(text) > 100:
+                                    break
+                    except Exception:
+                        pass
+                
+                # Final fallback: full body but skip first 500 chars (usually nav)
+                if not text:
+                    text = await page.inner_text("body")
+                    if len(text) > 500:
+                        text = text[500:]  # Skip navigation
+                
+                return text[:2000]
             except Exception:
                 return None
 
         return None
 
     def _summarize(self, goal: str, results: List, content: str) -> str:
-        """Summarize browser results. Tries Groq → Gemini → GitHub → raw content."""
-        prompt = f"""Summarize this browser task result in 2-3 simple Hinglish sentences.
-Goal was: {goal}
-Page content (partial): {content[:800]}
-Give a short, useful summary in Hinglish. Focus on key info like prices, names, results."""
+        """Summarize browser results with shopping-aware AI prompt."""
+        # Detect if this is a shopping query
+        is_shopping = any(w in goal.lower() for w in [
+            "best", "recommend", "under", "ke andar", "buy", "khareed",
+            "headphone", "earphone", "phone", "laptop", "watch", "speaker",
+            "keyboard", "mouse", "camera", "bag", "shoes", "tablet",
+            "₹", "rupees", "rs", "budget", "price", "cheap", "sasta",
+        ])
 
-        # Try Groq
+        if is_shopping:
+            system_prompt = """Tu Shweta hai — ek helpful Indian AI assistant jo shopping mein friend ki tarah help karti hai.
+
+RULES:
+- Hinglish mein bol, bilkul casual jaise bestie ko bata rahi ho
+- TOP 2-3 products recommend kar with exact prices
+- Ek clear "Main ye recommend karungi" wala answer de
+- 80-100 words mein bol — concise reh
+- Agar price budget ke andar nahi hai toh clearly bol
+- Technical specs mat gina — simple benefits bata (bass achha hai, mic clear hai, etc)
+- Sound like: "Haan bhai! Main [product] recommend karungi — [price] mein milta hai, [benefit]. Dusra option [product2] hai..."
+"""
+            user_prompt = f"""User ne poocha: "{goal}"
+
+Search results (products found):
+{content[:3000]}
+
+Ab in results ke basis pe user ko best 2-3 recommendations de. Prices mention kar. Casual Hinglish mein bol."""
+        else:
+            system_prompt = """Tu Shweta hai — helpful AI assistant. Search results ko padhke user ko clear, concise answer de Hinglish mein. 80-100 words max."""
+            user_prompt = f"""User ne poocha: "{goal}"
+
+Search results:
+{content[:2500]}
+
+Ab in results ke basis pe user ko clear answer de."""
+
+        # Try Groq (best for this — fast + good Hindi)
         try:
             import requests as req
             groq_key = os.getenv("GROQ_API_KEY", "")
@@ -265,7 +427,15 @@ Give a short, useful summary in Hinglish. Focus on key info like prices, names, 
                 resp = req.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                    json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 150},
+                    json={
+                        "model": "llama-3.3-70b-versatile",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "temperature": 0.4,
+                        "max_tokens": 250
+                    },
                     timeout=10
                 )
                 if resp.status_code == 200:
@@ -279,14 +449,15 @@ Give a short, useful summary in Hinglish. Focus on key info like prices, names, 
             from google.genai import types
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite", contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=150)
+                model="gemini-2.0-flash-lite",
+                contents=f"{system_prompt}\n\n{user_prompt}",
+                config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=250)
             )
             return response.text.strip()
         except Exception:
             pass
 
-        # Try GitHub
+        # Try GitHub Models
         try:
             import requests as req
             gh_token = os.getenv("GITHUB_TOKEN", "")
@@ -294,7 +465,15 @@ Give a short, useful summary in Hinglish. Focus on key info like prices, names, 
                 resp = req.post(
                     "https://models.inference.ai.azure.com/chat/completions",
                     headers={"Authorization": f"Bearer {gh_token}", "Content-Type": "application/json"},
-                    json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 150},
+                    json={
+                        "model": "gpt-4o-mini",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "temperature": 0.4,
+                        "max_tokens": 250
+                    },
                     timeout=15
                 )
                 if resp.status_code == 200:
@@ -302,10 +481,14 @@ Give a short, useful summary in Hinglish. Focus on key info like prices, names, 
         except Exception:
             pass
 
-        # All AI failed — return raw useful content
-        if content:
+        # All AI failed — return raw product list directly
+        if content and "PRODUCTS FOUND:" in content:
+            lines = content.replace("PRODUCTS FOUND:\n", "").split("\n")[:3]
+            return "Maine ye options dekhe: " + ", ".join(lines) + ". Amazon pe check kar."
+        elif content:
             lines = [l.strip() for l in content.split("\n") if len(l.strip()) > 15]
-            return " | ".join(lines[:5])[:200] or "Results screen pe dikh rahe hain."
+            return " | ".join(lines[:4])[:200] or "Results screen pe dikh rahe hain."
+        return "Search ho gaya, results screen pe dekh le."
         return "Task complete, browser mein results dekh lo."
 
     def get_history(self) -> List[Dict]:

@@ -163,7 +163,7 @@ class LanguageManager:
 
     def __init__(self) -> None:
         self.current_lang: str = "hinglish"
-        self._auto_mode: bool = True
+        self._auto_mode: bool = False  # OFF by default — Hinglish fixed
 
     def set_language(self, lang: str) -> Dict[str, str]:
         """Manually switch language (disables auto-detect)."""
@@ -184,7 +184,7 @@ class LanguageManager:
             self._auto_mode = False
             name = VOICES[lang]["name"]
             logger.info(f"Language manually set to: {name}")
-            return {"status": "success", "message": f"Language {name} mein switch kar diya!"}
+            return {"status": "success", "message": f"Chal {name} mein switch kar diya!"}
         else:
             available = ", ".join(VOICES.keys())
             return {"status": "error", "message": f"Language nahi mili. Available: {available}"}
@@ -194,11 +194,17 @@ class LanguageManager:
         if not self._auto_mode:
             return self.current_lang
 
-        detected = detect_language(user_text)
-        if detected != self.current_lang:
-            logger.info(f"Language auto-switched: {self.current_lang} -> {detected}")
-            self.current_lang = detected
-        return detected
+        # Only switch if CLEARLY different language (Devanagari detected)
+        import re
+        devanagari_chars = len(re.findall(r'[\u0900-\u097F]', user_text))
+        if devanagari_chars >= 3:
+            # Devanagari detected — switch to Hindi or Marathi
+            detected = detect_language(user_text)
+            if detected in ("hindi", "marathi") and detected != self.current_lang:
+                logger.info(f"Language auto-switched: {self.current_lang} -> {detected}")
+                self.current_lang = detected
+        
+        return self.current_lang
 
     def get_voice(self) -> str:
         """Get current Edge TTS voice name."""

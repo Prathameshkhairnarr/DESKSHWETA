@@ -21,6 +21,7 @@ from assistant.voice_output import VoiceOutput
 from assistant.ai_brain import AIBrain
 from assistant.desktop_control import DesktopController
 from assistant.channels.telegram_bot import ShwetaTelegramBot
+from assistant.activation import setup_activation
 
 # --- OLD TKINTER UI (commented out — kept for easy rollback) ---
 # from assistant.ui import AssistantUI
@@ -62,10 +63,16 @@ class ShwetaAssistant:
         )
 
         # Initialize PyQt5 Avatar UI (main thread)
-        self.ui = AvatarWindow(on_mic_click=self._on_mic_click)
+        self.ui = AvatarWindow(on_mic_click=self._on_mic_click, on_quick_action=self._on_quick_action)
 
         # Connect lip sync: voice_output → avatar
         self.voice_output.set_lip_sync_callback(self._on_lip_sync)
+
+        # Connect window shake reactions to voice output (with intensity)
+        self.ui.set_speak_reaction_fn(lambda text: self.voice_output.speak_reaction(text))
+
+        # Connect music vibe to avatar
+        self.desktop_control.set_music_vibe_callback(self._on_music_vibe)
 
         # Set mic button state based on microphone availability
         if not self.voice_input.is_available:
@@ -92,24 +99,89 @@ class ShwetaAssistant:
         # Connect language manager to voice output
         self.desktop_control.language  # initialized
 
-        # Greet user on startup (wait for avatar to fully load — VRM takes ~3 sec)
-        QTimer_singleshot_greet = threading.Timer(3.0, self._greet_threadsafe)
+        # Initialize Daily Briefing Manager
+        from assistant.skills.daily_briefing import DailyBriefingManager
+        self.briefing_manager = DailyBriefingManager()
+
+        # Greet user on startup — deliver briefing if first time today, else simple greet
+        # Wait for avatar to fully load (VRM takes ~3 sec)
+        QTimer_singleshot_greet = threading.Timer(5.0, self._startup_greet_or_briefing)
         QTimer_singleshot_greet.daemon = True
         QTimer_singleshot_greet.start()
 
-    def _greet_threadsafe(self) -> None:
-        """Greet from background thread (uses schedule for UI updates)."""
-        greeting = f"Namaste! Main {ASSISTANT_NAME} hoon."
-        self.ui.schedule(self.ui.set_text, greeting)
-        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
-        self.voice_output.speak(
-            greeting,
-            callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+    def _startup_greet_or_briefing(self) -> None:
+        """On startup: deliver daily briefing if not yet done today, else simple greet."""
+        from assistant.skills.daily_briefing import should_brief_today, is_briefing_time
+
+        # Set callbacks for briefing manager
+        self.briefing_manager.set_callbacks(
+            speak_fn=lambda text: self.voice_output.speak(
+                text,
+                callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+            ),
+            set_emotion_fn=lambda e, i: self.ui.schedule(self.ui.set_emotion, e, i),
+            show_bubble_fn=lambda t, d: self.ui.schedule(self.ui.show_chat_bubble, t, d),
         )
+
+        if should_brief_today() and is_briefing_time():
+            # Deliver full briefing
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+            self.ui.schedule(self.ui.set_emotion, "happy", 0.8)
+            self.briefing_manager.deliver()
+        else:
+            # Simple greeting
+            greeting = f"Namaste! Main {ASSISTANT_NAME} hoon."
+            self.ui.schedule(self.ui.set_text, greeting)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+            self.voice_output.speak(
+                greeting,
+                callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+            )
 
     def _on_lip_sync(self, volume: float) -> None:
         """Callback from voice_output with audio volume for lip sync."""
         self.ui.schedule(self.ui.set_lip_sync, volume)
+
+    def _on_music_vibe(self, mood: str, bpm: int) -> None:
+        """Callback when music starts/stops — trigger avatar vibe animation."""
+        if mood == "stop":
+            js_code = "if(window.stopMusicVibe) window.stopMusicVibe()"
+        else:
+            js_code = f"if(window.startMusicVibe) window.startMusicVibe('{mood}', {bpm})"
+        self.ui.schedule(lambda: self.ui._run_js(js_code))
+        logger.info(f"[Music Vibe] {mood} @ {bpm} BPM")
+
+    def _on_quick_action(self, action_str: str) -> None:
+        """Handle quick action button clicks from avatar UI."""
+        if self._is_processing:
+            return
+
+        def _execute():
+            self._is_processing = True
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
+            try:
+                # Parse action string (format: "action_name" or "action_name:param")
+                parts = action_str.split(":", 1)
+                action = parts[0]
+                params = {}
+                if len(parts) > 1:
+                    params = {"mood": parts[1]} if action == "spotify_mood" else {"city": parts[1]}
+
+                result = self.desktop_control.execute(action, params)
+                reply = result.get("message", "Done!")
+
+                self.ui.schedule(self.ui.set_text, f"💬 {reply}")
+                self.ui.schedule(self.ui.show_chat_bubble, reply, 5.0)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+                current_voice = self.desktop_control.language.get_voice()
+                self.voice_output.speak(reply, voice=current_voice, callback=self._on_speaking_done)
+            except Exception as e:
+                logger.error(f"Quick action failed: {e}")
+                self._is_processing = False
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+
+        thread = threading.Thread(target=_execute, daemon=True)
+        thread.start()
 
     def _on_mic_click(self) -> None:
         """Handle mic click — if stuck in thinking/speaking, reset. Otherwise start listening."""
@@ -145,7 +217,6 @@ class ShwetaAssistant:
             self._is_listening = False
 
             if not text:
-                # No speech detected
                 self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
                 self.ui.schedule(self.ui.set_text, "Samajh nahi aaya, phir se boliye...")
                 self.voice_output.speak(
@@ -176,14 +247,27 @@ class ShwetaAssistant:
         """
         self._is_processing = True
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
+        self.ui.schedule(self.ui.show_typing_bubble)
 
         # Check for special commands
         if self._handle_special_commands(text):
             self._is_processing = False
             return
 
+        # Feed user context to AI (learning)
+        try:
+            self.ai_brain._user_context = self.desktop_control.learner.get_ai_context()
+        except Exception:
+            pass
+
         # Send to AI brain (with language detection)
         response = self.ai_brain.think(text, language_manager=self.desktop_control.language)
+
+        # Track user patterns
+        try:
+            self.desktop_control.learner.track_topic(text)
+        except Exception:
+            pass
 
         action = response.get("action", "none")
         params = response.get("params", {})
@@ -230,6 +314,16 @@ class ShwetaAssistant:
         # Set avatar emotion based on AI response
         if emotion:
             self.ui.schedule(self.ui.set_emotion, emotion, 0.8 if emotion != "neutral" else 0.0)
+            # Track mood for learning
+            try:
+                self.desktop_control.learner.track_mood(emotion)
+            except Exception:
+                pass
+
+        # Stop music vibe if the current command is not related to music
+        music_actions = {"play_youtube", "spotify_play_song", "spotify_play_playlist", "spotify_mood", "spotify_next", "spotify_previous", "spotify_play_pause", "media_play_pause", "media_next", "media_previous"}
+        if not action or action == "none" or action not in music_actions:
+            self.desktop_control._stop_music_vibe()
 
         # Execute action first (if any)
         action_message = ""
@@ -258,22 +352,27 @@ class ShwetaAssistant:
         info_actions = ["get_crypto_price", "get_stock_market", "get_news", "get_gold_price",
                         "get_weather", "get_battery", "get_ram_usage", "get_storage",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
-                        "get_date", "list_files", "search_file", "list_notes", "daily_briefing"]
+                        "get_date", "list_files", "search_file", "list_notes", "daily_briefing",
+                        "morning_briefing", "browser_agent_task"]
         if action in info_actions and action_message:
             clean_msg = action_message.replace("📈", "").replace("📉", "").replace("🥇", "").replace("🥈", "").replace("🔋", "").replace("💾", "").replace("🖥️", "").replace("💿", "").replace("📝", "").replace("🕐", "").replace("🌤", "").strip()
-            if len(clean_msg) > 150:
-                clean_msg = clean_msg[:150]
+            # Browser agent needs more chars for product recommendations
+            max_len = 300 if action == "browser_agent_task" else 150
+            if len(clean_msg) > max_len:
+                clean_msg = clean_msg[:max_len]
             reply = clean_msg
 
         # Speak the reply (once only)
         if reply:
             self.ui.schedule(self.ui.set_text, f"💬 {reply}")
+            self.ui.schedule(self.ui.show_chat_bubble, reply, 6.0)
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
             current_voice = self.desktop_control.language.get_voice()
             self.voice_output.speak(reply, voice=current_voice, callback=self._on_speaking_done)
         else:
             self._is_processing = False
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+            self.ui.schedule(self.ui.hide_chat_bubble)
 
     def _on_speaking_done(self) -> None:
         """Callback when TTS finishes speaking."""
@@ -422,6 +521,12 @@ class ShwetaAssistant:
 def main() -> None:
     """Application entry point."""
     try:
+        # === ACTIVATION CHECK (before anything else) ===
+        # In dev mode (no bundle file) this is skipped automatically
+        if not setup_activation():
+            logger.info("Activation cancelled — exiting.")
+            sys.exit(0)
+
         app = ShwetaAssistant()
         app.run()
     except KeyboardInterrupt:

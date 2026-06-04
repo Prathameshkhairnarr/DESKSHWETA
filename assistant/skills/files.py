@@ -14,10 +14,22 @@ from typing import Dict
 logger = logging.getLogger(__name__)
 
 # Common user directories
-HOME = Path.home()
-DESKTOP = HOME / "Desktop"
-DOCUMENTS = HOME / "Documents"
-DOWNLOADS = HOME / "Downloads"
+HOME = Path.home().resolve()
+DESKTOP = (HOME / "Desktop").resolve()
+DOCUMENTS = (HOME / "Documents").resolve()
+DOWNLOADS = (HOME / "Downloads").resolve()
+
+
+def _is_safe_path(path: Path) -> bool:
+    """
+    Check if the path is safe (inside user's HOME directory) to prevent directory traversal.
+    """
+    try:
+        # Resolve path using abspath to handle relative components without requiring file existence
+        abs_path = Path(os.path.abspath(path)).resolve()
+        return abs_path == HOME or HOME in abs_path.parents
+    except Exception:
+        return False
 
 
 def _resolve_path(filepath: str) -> Path:
@@ -51,6 +63,8 @@ def create_file(filename: str, content: str = "") -> Dict[str, str]:
     """
     try:
         filepath = DESKTOP / filename if not Path(filename).is_absolute() else Path(filename)
+        if not _is_safe_path(filepath):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content, encoding="utf-8")
         logger.info(f"Created file: {filepath}")
@@ -68,6 +82,8 @@ def create_folder(foldername: str) -> Dict[str, str]:
     """
     try:
         folderpath = DESKTOP / foldername if not Path(foldername).is_absolute() else Path(foldername)
+        if not _is_safe_path(folderpath):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
         folderpath.mkdir(parents=True, exist_ok=True)
         logger.info(f"Created folder: {folderpath}")
         return {"status": "success", "message": f"Folder bana diya: {folderpath.name}"}
@@ -84,6 +100,8 @@ def delete_file(filename: str) -> Dict[str, str]:
     """
     try:
         filepath = _resolve_path(filename)
+        if not _is_safe_path(filepath):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
 
         if not filepath.exists():
             return {"status": "error", "message": f"'{filename}' nahi mila."}
@@ -114,12 +132,17 @@ def rename_file(old_name: str, new_name: str) -> Dict[str, str]:
     """
     try:
         old_path = _resolve_path(old_name)
+        if not _is_safe_path(old_path):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
 
         if not old_path.exists():
             return {"status": "error", "message": f"'{old_name}' nahi mila."}
 
         # New path in same directory
         new_path = old_path.parent / new_name
+        if not _is_safe_path(new_path):
+            return {"status": "error", "message": "Access Denied: New path home folder ke bahar hai."}
+
         old_path.rename(new_path)
         logger.info(f"Renamed: {old_path.name} → {new_path.name}")
         return {"status": "success", "message": f"Rename kar diya: {old_path.name} → {new_path.name}"}
@@ -137,6 +160,9 @@ def move_file(filename: str, destination: str) -> Dict[str, str]:
     """
     try:
         src = _resolve_path(filename)
+        if not _is_safe_path(src):
+            return {"status": "error", "message": "Access Denied: Source path home folder ke bahar hai."}
+
         if not src.exists():
             return {"status": "error", "message": f"'{filename}' nahi mila."}
 
@@ -149,6 +175,9 @@ def move_file(filename: str, destination: str) -> Dict[str, str]:
                 "downloads": DOWNLOADS,
             }
             dest = folder_map.get(destination.lower(), HOME / destination)
+
+        if not _is_safe_path(dest):
+            return {"status": "error", "message": "Access Denied: Destination path home folder ke bahar hai."}
 
         dest.mkdir(parents=True, exist_ok=True)
         new_path = dest / src.name
@@ -169,6 +198,9 @@ def copy_file(filename: str, destination: str) -> Dict[str, str]:
     """
     try:
         src = _resolve_path(filename)
+        if not _is_safe_path(src):
+            return {"status": "error", "message": "Access Denied: Source path home folder ke bahar hai."}
+
         if not src.exists():
             return {"status": "error", "message": f"'{filename}' nahi mila."}
 
@@ -180,6 +212,9 @@ def copy_file(filename: str, destination: str) -> Dict[str, str]:
                 "downloads": DOWNLOADS,
             }
             dest = folder_map.get(destination.lower(), HOME / destination)
+
+        if not _is_safe_path(dest):
+            return {"status": "error", "message": "Access Denied: Destination path home folder ke bahar hai."}
 
         dest.mkdir(parents=True, exist_ok=True)
         new_path = dest / src.name
@@ -210,6 +245,9 @@ def list_files(folder: str = "") -> Dict[str, str]:
             if not target.is_dir():
                 target = DESKTOP
 
+        if not _is_safe_path(target):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
+
         files = []
         for item in sorted(target.iterdir()):
             icon = "📁" if item.is_dir() else "📄"
@@ -238,6 +276,9 @@ def open_file(filename: str) -> Dict[str, str]:
     """
     try:
         filepath = _resolve_path(filename)
+        if not _is_safe_path(filepath):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
+
         if not filepath.exists():
             return {"status": "error", "message": f"'{filename}' nahi mila."}
 
@@ -265,8 +306,11 @@ def search_file(name: str, location: str = "") -> Dict[str, str]:
 
         results = []
 
-        # Use Windows 'where' or 'dir /s' for fast search
+        # If location is provided, make sure it is safe
         if location:
+            loc_path = Path(location)
+            if not _is_safe_path(loc_path):
+                return {"status": "error", "message": "Access Denied: Search location home folder ke bahar hai."}
             search_path = location
         else:
             search_path = str(HOME)
@@ -285,7 +329,8 @@ def search_file(name: str, location: str = "") -> Dict[str, str]:
         if not results and not location:
             for drive in ["C:\\", "D:\\", "E:\\"]:
                 if Path(drive).exists():
-                    ps_cmd = f'Get-ChildItem -Path "{drive}" -Recurse -Filter "*{name}*" -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName'
+                    # Ignore System folders in search
+                    ps_cmd = f'Get-ChildItem -Path "{drive}" -Recurse -Filter "*{name}*" -ErrorAction SilentlyContinue | Where-Object {{ $_.FullName -notmatch "Windows|Program Files|AppData" }} | Select-Object -First 5 -ExpandProperty FullName'
                     result = subprocess.run(
                         ["powershell", "-NoProfile", "-Command", ps_cmd],
                         capture_output=True, text=True, timeout=20
@@ -297,10 +342,24 @@ def search_file(name: str, location: str = "") -> Dict[str, str]:
         if results:
             # Clean results
             results = [r.strip() for r in results if r.strip()][:10]
-            msg = f"'{name}' mil gaya! {len(results)} results:\n"
-            for i, r in enumerate(results, 1):
-                msg += f"  {i}. {r}\n"
-            return {"status": "success", "message": msg, "paths": results}
+            # Verify paths
+            safe_results = []
+            for r in results:
+                r_path = Path(r)
+                if r_path.drive.lower() == 'c:':
+                    if _is_safe_path(r_path):
+                        safe_results.append(r)
+                else:
+                    if not any(sys_dir in r.lower() for sys_dir in ["windows", "program files", "appdata", "$recycle.bin", "system volume information"]):
+                        safe_results.append(r)
+
+            if safe_results:
+                msg = f"'{name}' mil gaya! {len(safe_results)} results:\n"
+                for i, r in enumerate(safe_results, 1):
+                    msg += f"  {i}. {r}\n"
+                return {"status": "success", "message": msg, "paths": safe_results}
+            else:
+                return {"status": "error", "message": f"'{name}' nahi mila PC mein."}
         else:
             return {"status": "error", "message": f"'{name}' nahi mila PC mein."}
 
@@ -323,6 +382,13 @@ def search_and_open(name: str) -> Dict[str, str]:
     if result["status"] == "success" and "paths" in result:
         first_path = result["paths"][0]
         try:
+            # Re-verify path safety before opening
+            r_path = Path(first_path)
+            if r_path.drive.lower() == 'c:' and not _is_safe_path(r_path):
+                return {"status": "error", "message": "Access Denied: Path open karne ki permission nahi hai."}
+            if any(sys_dir in first_path.lower() for sys_dir in ["windows", "program files", "appdata", "$recycle.bin", "system volume information"]):
+                return {"status": "error", "message": "Access Denied: System path open karne ki permission nahi hai."}
+
             if Path(first_path).is_dir():
                 # Open folder in explorer
                 _os.startfile(first_path)
