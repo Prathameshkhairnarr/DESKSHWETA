@@ -708,12 +708,16 @@ class DesktopController:
         return notes.list_notes()
 
     def _delete_note(self, params: Dict) -> Dict[str, str]:
-        note_id = params.get("id", 0)
-        return notes.delete_note(int(note_id))
+        target = params.get("id", params.get("query", params.get("text", "")))
+        if not target:
+            return {"status": "error", "message": "Note details to delete not provided."}
+        return notes.delete_note(str(target))
 
     def _complete_note(self, params: Dict) -> Dict[str, str]:
-        note_id = params.get("id", 0)
-        return notes.complete_note(int(note_id))
+        target = params.get("id", params.get("query", params.get("text", "")))
+        if not target:
+            return {"status": "error", "message": "Note details to complete not provided."}
+        return notes.complete_note(str(target))
 
     def _clear_notes(self, params: Dict) -> Dict[str, str]:
         return notes.clear_notes()

@@ -34,8 +34,9 @@ def add_note(text: str) -> Dict[str, str]:
     """Add a new note."""
     try:
         notes = _load_notes()
+        next_id = max([n["id"] for n in notes]) + 1 if notes else 1
         note = {
-            "id": len(notes) + 1,
+            "id": next_id,
             "text": text,
             "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "done": False
@@ -65,27 +66,76 @@ def list_notes() -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
-def delete_note(note_id: int) -> Dict[str, str]:
-    """Delete a note by ID."""
+def delete_note(target: str) -> Dict[str, str]:
+    """Delete a note by ID or matching text query."""
     try:
         notes = _load_notes()
-        notes = [n for n in notes if n["id"] != note_id]
+        original_len = len(notes)
+
+        # Check if target is numeric (ID)
+        is_numeric = False
+        try:
+            note_id = int(target)
+            is_numeric = True
+        except ValueError:
+            pass
+
+        if is_numeric:
+            notes = [n for n in notes if n["id"] != note_id]
+        elif str(target).lower().strip() in ["last", "last_note", "latest", "recent", "last note"]:
+            if notes:
+                notes.pop()
+            else:
+                return {"status": "error", "message": "Koyi note nahi mila."}
+        else:
+            query = str(target).lower().strip()
+            notes = [n for n in notes if query not in n["text"].lower()]
+
+        if len(notes) == original_len:
+            return {"status": "error", "message": f"Koyi match hone wala note nahi mila: '{target}'."}
+
         _save_notes(notes)
-        return {"status": "success", "message": f"Note #{note_id} delete kar diya."}
+        return {"status": "success", "message": f"Note delete kar diya hai."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
-def complete_note(note_id: int) -> Dict[str, str]:
-    """Mark a note as done."""
+def complete_note(target: str) -> Dict[str, str]:
+    """Mark a note as done by ID or matching text query."""
     try:
         notes = _load_notes()
-        for n in notes:
-            if n["id"] == note_id:
-                n["done"] = True
-                break
+        is_numeric = False
+        try:
+            note_id = int(target)
+            is_numeric = True
+        except ValueError:
+            pass
+
+        found = False
+        if is_numeric:
+            for n in notes:
+                if n["id"] == note_id:
+                    n["done"] = True
+                    found = True
+                    break
+        elif str(target).lower().strip() in ["last", "last_note", "latest", "recent", "last note"]:
+            if notes:
+                notes[-1]["done"] = True
+                found = True
+            else:
+                return {"status": "error", "message": "Koyi note nahi mila."}
+        else:
+            query = str(target).lower().strip()
+            for n in notes:
+                if query in n["text"].lower():
+                    n["done"] = True
+                    found = True
+
+        if not found:
+            return {"status": "error", "message": f"Koyi match hone wala note nahi mila: '{target}'."}
+
         _save_notes(notes)
-        return {"status": "success", "message": f"Note #{note_id} complete mark kar diya."}
+        return {"status": "success", "message": f"Note complete mark kar diya hai."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
