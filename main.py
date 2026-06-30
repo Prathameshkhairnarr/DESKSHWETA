@@ -22,6 +22,7 @@ from assistant.ai_brain import AIBrain
 from assistant.desktop_control import DesktopController
 from assistant.channels.telegram_bot import ShwetaTelegramBot
 from assistant.activation import setup_activation
+from assistant.skills.proactive_agent import ProactiveManager
 
 # --- OLD TKINTER UI (commented out — kept for easy rollback) ---
 # from assistant.ui import AssistantUI
@@ -74,6 +75,9 @@ class ShwetaAssistant:
         # Connect music vibe to avatar
         self.desktop_control.set_music_vibe_callback(self._on_music_vibe)
 
+        # Connect change style callback
+        self.desktop_control.set_change_style_callback(self._on_change_style)
+
         # Set mic button state based on microphone availability
         if not self.voice_input.is_available:
             self.ui.set_mic_enabled(False)
@@ -83,6 +87,9 @@ class ShwetaAssistant:
         self._is_listening = False
         self._is_processing = False
         self._pending_confirm = None
+        self._is_music_active = False
+        import time
+        self._last_activity_time = time.time()
 
         # Register global hotkeys
         self._register_hotkeys()
@@ -99,9 +106,20 @@ class ShwetaAssistant:
         # Connect language manager to voice output
         self.desktop_control.language  # initialized
 
+        # Start idle check timer (checks every 10 seconds)
+        self._init_idle_timer()
+
         # Initialize Daily Briefing Manager
         from assistant.skills.daily_briefing import DailyBriefingManager
         self.briefing_manager = DailyBriefingManager()
+
+        # Initialize Proactive Notifications Manager
+        self.proactive_manager = ProactiveManager(
+            ai_brain=self.ai_brain,
+            desktop_control=self.desktop_control,
+            on_notify_callback=self._on_proactive_notify
+        )
+        self.proactive_manager.start()
 
         # Greet user on startup — deliver briefing if first time today, else simple greet
         # Wait for avatar to fully load (VRM takes ~3 sec)
@@ -138,6 +156,22 @@ class ShwetaAssistant:
                 callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
             )
 
+    def _on_proactive_notify(self, message: str) -> None:
+        """Callback when the ProactiveManager wants to notify the user."""
+        # Only notify if we are idle
+        if self._is_processing or self._is_listening or self.voice_output.is_speaking or self._is_music_active:
+            logger.info("Skipped proactive notification because assistant is busy.")
+            return
+
+        self._is_processing = True
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+        self.ui.schedule(self.ui.set_emotion, "neutral", 0.6)
+        self.ui.schedule(self.ui.set_text, f"🔔 {message}")
+        self.ui.schedule(self.ui.show_chat_bubble, message, 6.0)
+        
+        current_voice = self.desktop_control.language.get_voice()
+        self.voice_output.speak(message, voice=current_voice, callback=self._on_speaking_done)
+
     def _on_lip_sync(self, volume: float) -> None:
         """Callback from voice_output with audio volume for lip sync."""
         self.ui.schedule(self.ui.set_lip_sync, volume)
@@ -146,13 +180,21 @@ class ShwetaAssistant:
         """Callback when music starts/stops — trigger avatar vibe animation."""
         if mood == "stop":
             js_code = "if(window.stopMusicVibe) window.stopMusicVibe()"
+            self._is_music_active = False
         else:
             js_code = f"if(window.startMusicVibe) window.startMusicVibe('{mood}', {bpm})"
+            self._is_music_active = True
         self.ui.schedule(lambda: self.ui._run_js(js_code))
         logger.info(f"[Music Vibe] {mood} @ {bpm} BPM")
 
+    def _on_change_style(self, style_type: str) -> None:
+        """Callback to change avatar style."""
+        self.ui.schedule(lambda: self.ui.change_style(style_type))
+
     def _on_quick_action(self, action_str: str) -> None:
         """Handle quick action button clicks from avatar UI."""
+        import time
+        self._last_activity_time = time.time()
         if self._is_processing:
             return
 
@@ -185,7 +227,16 @@ class ShwetaAssistant:
 
     def _on_mic_click(self) -> None:
         """Handle mic click — if stuck in thinking/speaking, reset. Otherwise start listening."""
-        if self._is_processing or self._is_listening:
+        import time
+        self._last_activity_time = time.time()
+
+        if getattr(self, '_is_idle_talking', False):
+            # Interrupted idle speech! Stop speaking immediately and proceed to listen
+            self.voice_output.stop()
+            self._is_idle_talking = False
+            self._is_processing = False
+            logger.info("Idle talking interrupted. Listening...")
+        elif self._is_processing or self._is_listening:
             # RESET — force stop everything and go back to idle
             self._is_processing = False
             self._is_listening = False
@@ -245,6 +296,8 @@ class ShwetaAssistant:
         Args:
             text: Recognized speech text.
         """
+        import time
+        self._last_activity_time = time.time()
         self._is_processing = True
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
         self.ui.schedule(self.ui.show_typing_bubble)
@@ -350,7 +403,7 @@ class ShwetaAssistant:
 
         # For info actions: use action result as the spoken reply
         info_actions = ["get_crypto_price", "get_stock_market", "get_news", "get_gold_price",
-                        "get_weather", "get_battery", "get_ram_usage", "get_storage",
+                        "get_battery", "get_ram_usage", "get_storage",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
                         "get_date", "list_files", "search_file", "list_notes", "daily_briefing",
                         "morning_briefing", "browser_agent_task"]
@@ -376,8 +429,66 @@ class ShwetaAssistant:
 
     def _on_speaking_done(self) -> None:
         """Callback when TTS finishes speaking."""
+        import time
         self._is_processing = False
+        self._is_idle_talking = False
+        self._last_activity_time = time.time()
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+
+    def _init_idle_timer(self) -> None:
+        """Initialize the background checker for idle state."""
+        from PyQt5.QtCore import QTimer
+        self._idle_timer = QTimer(self.ui)
+        self._idle_timer.setInterval(10000)  # Check every 10 seconds
+        self._idle_timer.timeout.connect(self._check_idle_activity)
+        self._idle_timer.start()
+
+    def _check_idle_activity(self) -> None:
+        """Check if user has been inactive for too long and trigger idle behavior."""
+        import time
+        # If Shweta is actively processing, listening, speaking, or if music is active, reset activity timer
+        if self._is_processing or self._is_listening or self.voice_output.is_speaking or self._is_music_active:
+            self._last_activity_time = time.time()
+            return
+
+        idle_duration = time.time() - self._last_activity_time
+        # Idle behavior threshold: 45 seconds
+        if idle_duration >= 45:
+            self._trigger_idle_behavior()
+
+    def _trigger_idle_behavior(self) -> None:
+        """Trigger a cute idle behavior (animation, text bubble, and spoken phrase) to show Shweta is alive."""
+        if self._is_processing or self._is_listening or self.voice_output.is_speaking or self._is_music_active:
+            return
+            
+        import random
+        import time
+        # Reset last activity time so we don't spam behaviors
+        self._last_activity_time = time.time()
+        
+        behaviors = [
+            {"phrase": "Arey yaar, tum toh kuch bol hi nahi rahe ho. Main bore ho rahi hoon!", "emotion": "sad", "animation": "down"},
+            {"phrase": "Oye! So gaye kya? Chalo jaldi se kuch kaam batao!", "emotion": "happy", "animation": "left"},
+            {"phrase": "Hmm, bohot sannata hai yahan. Kuch interesting baat karo na.", "emotion": "relaxed", "animation": "right"},
+            {"phrase": "Acha suno, agar free ho toh chalo rock-paper-scissors khelte hain!", "emotion": "happy", "animation": "up"},
+            {"phrase": "Batao na re, kya chal raha hai? Main kab se baithi hoon aise hi.", "emotion": "relaxed", "animation": "left"}
+        ]
+        b = random.choice(behaviors)
+        
+        self._is_idle_talking = True
+        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+        self.ui.schedule(self.ui.set_emotion, b["emotion"], 0.6)
+        self.ui.schedule(self.ui.set_text, f"💬 {b['phrase']}")
+        self.ui.schedule(self.ui.show_chat_bubble, b["phrase"], 6.0)
+        
+        # Trigger head turn animation
+        js_code = f"if(window.setReactionAnimation) window.setReactionAnimation('{b['animation']}')"
+        self.ui.schedule(lambda: self.ui._run_js(js_code))
+        
+        # Speak the phrase aloud
+        current_voice = self.desktop_control.language.get_voice()
+        self._is_processing = True # Mark as processing to block other idle checks
+        self.voice_output.speak(b["phrase"], voice=current_voice, callback=self._on_speaking_done)
 
     def _handle_special_commands(self, text: str) -> bool:
         """
@@ -440,10 +551,52 @@ class ShwetaAssistant:
             timer_id: The completed timer's ID.
             message: The timer message.
         """
-        self.ui.schedule(self.ui.set_text, f"⏰ {message}")
+        import random
+
+        # Determine if it's a timer or a reminder
+        is_reminder = False
+        task_text = message
+
+        try:
+            with self.desktop_control.timer_manager._lock:
+                timer_info = self.desktop_control.timer_manager._timers.get(timer_id)
+                if timer_info:
+                    is_reminder = (timer_info.get("type") == "reminder")
+        except Exception:
+            pass
+
+        if not is_reminder and message.startswith("Reminder:"):
+            is_reminder = True
+
+        if is_reminder:
+            # Extract the actual task from message like "Reminder: study"
+            if message.startswith("Reminder:"):
+                task_text = message[len("Reminder:"):].strip()
+
+            roasts = [
+                f"Arey sun! Tujhe yaad dilana tha: {task_text}. Chal ab nakhre chhod aur jaldi se ye kar!",
+                f"Tujhe bada yaad dilana padta hai re! Chal jaldi se kaam kar: {task_text}.",
+                f"Oye! Aloo bhujia khana band kar aur jaldi se ye kaam kar: {task_text}. Kab se wait kar rahi hoon!",
+                f"Dekho ji, tumhara reminder baj raha hai: {task_text}. Baad me mat bolna ki main batana bhool gayi!",
+                f"Arey yaar, kitne reminders lagate ho! Chalo ab jaldi se karo: {task_text}."
+            ]
+            final_message = random.choice(roasts)
+            ui_message = f"Reminder: {task_text}"
+        else:
+            roasts = [
+                "Uth jaa re lazy bones! Kab tak soyega? PC tera raasta dekh raha hai!",
+                "Suno re! Jo timer lagaya tha wo khatam ho gaya. Ab kaam shuru karo, nakhre mat dikhao!",
+                "Chalo chalo, break over! Tumhara timer kab ka baj chuka hai, ab mehnat karo thodi!",
+                "Ding dong! Timer khatam! Chalo ab jaldi se screen pe dhyan do, idhar udhar mat dekho!",
+                "Arey! Timer baj gaya re baba! Ab toh kaam shuru kar do, ya bas vibing hi karte rahoge?"
+            ]
+            final_message = random.choice(roasts)
+            ui_message = "Timer complete!"
+
+        self.ui.schedule(self.ui.set_text, f"⏰ {ui_message}")
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
         self.voice_output.speak(
-            message,
+            final_message,
             callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
         )
 
@@ -515,6 +668,8 @@ class ShwetaAssistant:
         self.desktop_control.timer_manager.cancel_all()
         if hasattr(self, '_wake_manager'):
             self._wake_manager.stop()
+        if hasattr(self, 'proactive_manager'):
+            self.proactive_manager.stop()
         logger.info(f"{ASSISTANT_NAME} shut down.")
 
 

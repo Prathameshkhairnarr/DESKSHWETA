@@ -1,1037 +1,1355 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-<meta charset="utf-8">
-<title>Shweta Avatar</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0a0f1a; overflow: hidden; font-family: 'Orbitron', sans-serif; }
-canvas { display: block; }
+    <meta charset="utf-8">
+    <title>Shweta Avatar</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-#status {
-    position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
-    color: #00d4ff; font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
-    text-shadow: 0 0 10px #00d4ff55; opacity: 0.7;
-    pointer-events: none;
-}
-#drag-bar {
-    position: fixed; top: 0; left: 0; right: 0; height: 30px;
-    cursor: move; -webkit-app-region: drag;
-    background: linear-gradient(180deg, rgba(0,200,255,0.1) 0%, transparent 100%);
-}
-#indicator {
-    position: fixed; top: 15px; right: 15px;
-    width: 8px; height: 8px; border-radius: 50%;
-    background: #00ff88; box-shadow: 0 0 8px #00ff8888;
-    transition: background 0.3s, box-shadow 0.3s;
-}
-#error {
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    color: #ff4444; font-size: 14px; display: none;
-}
+        body {
+            background: transparent;
+            overflow: hidden;
+            font-family: 'Orbitron', sans-serif;
+        }
 
-/* === QUICK ACTION BUTTONS === */
-#quick-actions {
-    position: fixed;
-    bottom: 55px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 12px;
-    z-index: 90;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-    pointer-events: none;
-}
-#quick-actions.visible {
-    opacity: 1;
-    pointer-events: auto;
-}
-.quick-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    border: 1px solid rgba(0, 212, 255, 0.4);
-    background: rgba(10, 20, 40, 0.8);
-    backdrop-filter: blur(8px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 14px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-}
-.quick-btn:hover {
-    background: rgba(0, 212, 255, 0.2);
-    border-color: rgba(0, 212, 255, 0.8);
-    transform: scale(1.15);
-    box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
-}
-.quick-btn:active {
-    transform: scale(0.95);
-}
-.quick-btn .tooltip {
-    position: absolute;
-    bottom: 42px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(10, 20, 40, 0.9);
-    color: #00d4ff;
-    font-size: 9px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
-    font-family: 'Segoe UI', sans-serif;
-}
-.quick-btn:hover .tooltip {
-    opacity: 1;
-}
 
-/* === CHAT BUBBLE === */
-#chat-bubble {
-    position: fixed;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: 340px;
-    min-width: 100px;
-    padding: 10px 16px;
-    background: rgba(15, 25, 50, 0.85);
-    border: 1px solid rgba(0, 212, 255, 0.3);
-    border-radius: 16px;
-    border-bottom-left-radius: 4px;
-    color: #e0e8ff;
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 12px;
-    line-height: 1.4;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 15px rgba(0, 212, 255, 0.1);
-    opacity: 0;
-    transition: opacity 0.3s ease, transform 0.3s ease;
-    transform: translateX(-50%) translateY(10px);
-    pointer-events: none;
-    z-index: 100;
-}
-#chat-bubble.visible {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-}
-#chat-bubble.fade-out {
-    opacity: 0;
-    transform: translateX(-50%) translateY(10px);
-}
 
-/* Typing dots animation */
-#chat-bubble .typing-dots {
-    display: inline-flex;
-    gap: 4px;
-    align-items: center;
-}
-#chat-bubble .typing-dots span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #00d4ff;
-    animation: typingBounce 1.2s infinite;
-}
-#chat-bubble .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
-#chat-bubble .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+        canvas {
+            display: block;
+        }
 
-@keyframes typingBounce {
-    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-    30% { transform: translateY(-6px); opacity: 1; }
-}
+        #status {
+            position: fixed;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #00d4ff;
+            font-size: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            text-shadow: 0 0 10px #00d4ff55;
+            opacity: 0.7;
+            pointer-events: none;
+        }
 
-/* Small triangle pointer */
-#chat-bubble::after {
-    content: '';
-    position: absolute;
-    bottom: -6px;
-    left: 20px;
-    width: 12px;
-    height: 12px;
-    background: rgba(15, 25, 50, 0.85);
-    border-right: 1px solid rgba(0, 212, 255, 0.3);
-    border-bottom: 1px solid rgba(0, 212, 255, 0.3);
-    transform: rotate(45deg);
-}
-#resize-grip {
-    position: fixed;
-    bottom: 0;
-    right: 0;
-    width: 30px;
-    height: 30px;
-    cursor: se-resize;
-    z-index: 10000;
-    background: linear-gradient(135deg, transparent 60%, rgba(0, 212, 255, 0.7) 60%);
-}
-</style>
+
+
+        #indicator {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff8888;
+            transition: background 0.3s, box-shadow 0.3s;
+        }
+
+        #error {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4444;
+            font-size: 14px;
+            display: none;
+        }
+
+        /* === QUICK ACTION BUTTONS === */
+        #quick-actions {
+            position: fixed;
+            bottom: 55px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 12px;
+            z-index: 90;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+
+        #quick-actions.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .quick-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 212, 255, 0.4);
+            background: rgba(10, 20, 40, 0.8);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 14px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .quick-btn:hover {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: rgba(0, 212, 255, 0.8);
+            transform: scale(1.15);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+        }
+
+        .quick-btn:active {
+            transform: scale(0.95);
+        }
+
+        .quick-btn .tooltip {
+            position: absolute;
+            bottom: 42px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 20, 40, 0.9);
+            color: #00d4ff;
+            font-size: 9px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        .quick-btn:hover .tooltip {
+            opacity: 1;
+        }
+
+        /* === CHAT BUBBLE === */
+        #chat-bubble {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: 340px;
+            min-width: 100px;
+            padding: 10px 16px;
+            background: rgba(15, 25, 50, 0.85);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 16px;
+            border-bottom-left-radius: 4px;
+            color: #e0e8ff;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 12px;
+            line-height: 1.4;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 15px rgba(0, 212, 255, 0.1);
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            transform: translateX(-50%) translateY(10px);
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        #chat-bubble.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        #chat-bubble.fade-out {
+            opacity: 0;
+            transform: translateX(-50%) translateY(10px);
+        }
+
+        /* Typing dots animation */
+        #chat-bubble .typing-dots {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        #chat-bubble .typing-dots span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #00d4ff;
+            animation: typingBounce 1.2s infinite;
+        }
+
+        #chat-bubble .typing-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        #chat-bubble .typing-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typingBounce {
+
+            0%,
+            60%,
+            100% {
+                transform: translateY(0);
+                opacity: 0.4;
+            }
+
+            30% {
+                transform: translateY(-6px);
+                opacity: 1;
+            }
+        }
+
+        /* Small triangle pointer */
+        #chat-bubble::after {
+            content: '';
+            position: absolute;
+            bottom: -6px;
+            left: 20px;
+            width: 12px;
+            height: 12px;
+            background: rgba(15, 25, 50, 0.85);
+            border-right: 1px solid rgba(0, 212, 255, 0.3);
+            border-bottom: 1px solid rgba(0, 212, 255, 0.3);
+            transform: rotate(45deg);
+        }
+
+        #resize-grip {
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            width: 30px;
+            height: 30px;
+            cursor: se-resize;
+            z-index: 10000;
+            background: linear-gradient(135deg, transparent 60%, rgba(0, 212, 255, 0.7) 60%);
+        }
+    </style>
 </head>
+
 <body>
-<div id="drag-bar"></div>
-<div id="resize-grip"></div>
-<div id="quick-actions">
-    <div class="quick-btn" id="btn-screenshot">📸<span class="tooltip">Screenshot</span></div>
-    <div class="quick-btn" id="btn-music">🎵<span class="tooltip">Music</span></div>
-    <div class="quick-btn" id="btn-weather">🌤<span class="tooltip">Weather</span></div>
-    <div class="quick-btn" id="btn-notes">📝<span class="tooltip">Notes</span></div>
-</div>
-<canvas id="particles" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:50;"></canvas>
-<div id="chat-bubble"></div>
-<div id="status">Idle</div>
-<div id="indicator"></div>
-<div id="error">Model not found</div>
+    <div id="resize-grip"></div>
+    <div id="quick-actions">
+        <div class="quick-btn" id="btn-screenshot">📸<span class="tooltip">Screenshot</span></div>
+        <div class="quick-btn" id="btn-music">🎵<span class="tooltip">Music</span></div>
+        <div class="quick-btn" id="btn-weather">🌤<span class="tooltip">Weather</span></div>
+        <div class="quick-btn" id="btn-notes">📝<span class="tooltip">Notes</span></div>
+    </div>
+    <canvas id="particles"
+        style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:50;"></canvas>
+    <div id="chat-bubble"></div>
+    <div id="status">Idle</div>
+    <div id="indicator"></div>
+    <div id="error">Model not found</div>
 
-<!-- Three.js r137 + three-vrm v1.0.0 (local — works offline) -->
-<script src="js/three.min.js"></script>
-<script src="js/GLTFLoader.js"></script>
-<script src="js/three-vrm.js"></script>
+    <!-- Three.js r137 + three-vrm v1.0.0 (local — works offline) -->
+    <script src="js/three.min.js"></script>
+    <script src="js/GLTFLoader.js"></script>
+    <script src="js/three-vrm.js"></script>
 
-<script>
-// === GLOBALS ===
-let scene, camera, renderer, vrm, clock;
-let currentState = 'idle';
-let lipSyncValue = 0.0;
-let targetLipSync = 0.0;
-let mouseX = 0, mouseY = 0;
-let blinkTimer = 0, blinkDuration = 0;
-let isBlinking = false;
-let breathPhase = 0;
-let musicVibing = false;
+    <script>
+        // === GLOBALS ===
+        let scene, camera, renderer, vrm, clock;
+        let currentState = 'idle';
+        let lipSyncValue = 0.0;
+        let targetLipSync = 0.0;
+        let mouseX = 0, mouseY = 0;
+        let blinkTimer = 0, blinkDuration = 0;
+        let isBlinking = false;
+        let breathPhase = 0;
+        let musicVibing = false;
+        let lookTarget; // dummy target for eye tracking
 
-// === EMOTION SYSTEM ===
-let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed
-let emotionIntensity = 0.0;
-let targetEmotionIntensity = 0.0;
-let emotionDecayTimer = 0;  // Auto-decay emotion after some time
-let emotionHeadTiltX = 0;  // Emotion-driven head X rotation target
-let emotionHeadTiltZ = 0;  // Emotion-driven head Z rotation target
+        // === EMOTION SYSTEM ===
+        let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed
+        let emotionIntensity = 0.0;
+        let targetEmotionIntensity = 0.0;
+        let emotionDecayTimer = 0;  // Auto-decay emotion after some time
+        let emotionHeadTiltX = 0;  // Emotion-driven head X rotation target
+        let emotionHeadTiltZ = 0;  // Emotion-driven head Z rotation target
 
-// === INIT ===
-function init() {
-    clock = new THREE.Clock();
-    scene = new THREE.Scene();
+        // === RANDOM LOOK AROUND SYSTEM ===
+        let randomLookX = 0;
+        let randomLookY = 0;
+        let randomLookTimer = 0;
 
-    // Camera — portrait view, upper body
-    camera = new THREE.PerspectiveCamera(24, window.innerWidth / window.innerHeight, 0.1, 100);
-    // Camera — head + upper chest, hands not visible
-    camera.position.set(0, 1.35, 1.1);
-    camera.lookAt(new THREE.Vector3(0, 1.27, 0));
+        // === INIT ===
+        function init() {
+            clock = new THREE.Clock();
+            scene = new THREE.Scene();
 
-    // Renderer
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setClearColor(0x0a0f1a, 1);
-    renderer.outputEncoding = THREE.sRGBEncoding;
-    document.body.appendChild(renderer.domElement);
+            // Create a dummy look target for eyeball tracking
+            lookTarget = new THREE.Object3D();
+            lookTarget.position.set(0, 1.35, 5.0);
+            scene.add(lookTarget);
 
-    // Lighting — soft natural (reduced shine)
-    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
-    scene.add(ambient);
+            // Camera — portrait view, upper body
+            camera = new THREE.PerspectiveCamera(24, window.innerWidth / window.innerHeight, 0.1, 100);
+            // Camera — head + upper chest, hands not visible
+            camera.position.set(0, 1.35, 1.1);
+            camera.lookAt(new THREE.Vector3(0, 1.27, 0));
 
-    const dirLight = new THREE.DirectionalLight(0xffeedd, 0.35);
-    dirLight.position.set(0, 2, 3);
-    scene.add(dirLight);
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setClearColor(0x000000, 0);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            document.body.appendChild(renderer.domElement);
 
-    const sideLight = new THREE.DirectionalLight(0xddeeff, 0.15);
-    sideLight.position.set(-2, 1, 2);
-    scene.add(sideLight);
+            // Lighting — soft natural (reduced shine)
+            const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+            scene.add(ambient);
 
-    // Load VRM using three-vrm v1.0.0 VRMLoaderPlugin
-    const loader = new THREE.GLTFLoader();
-    loader.register((parser) => {
-        return new THREE_VRM.VRMLoaderPlugin(parser);
-    });
-    
-    loader.load('./AvatarSample_F.vrm',
-        (gltf) => {
-            vrm = gltf.userData.vrm;
+            const dirLight = new THREE.DirectionalLight(0xffeedd, 0.35);
+            dirLight.position.set(0, 2, 3);
+            scene.add(dirLight);
+
+            const sideLight = new THREE.DirectionalLight(0xddeeff, 0.15);
+            sideLight.position.set(-2, 1, 2);
+            scene.add(sideLight);
+
+            // Load VRM using three-vrm v1.0.0 VRMLoaderPlugin
+            const loader = new THREE.GLTFLoader();
+            loader.register((parser) => {
+                return new THREE_VRM.VRMLoaderPlugin(parser);
+            });
+
+            loader.load('./AvatarSample_F.vrm',
+                (gltf) => {
+                    vrm = gltf.userData.vrm;
+                    if (vrm) {
+                        scene.add(vrm.scene);
+                        // Scale X by 1 = normal scale
+                        vrm.scene.scale.x = 1;
+
+                        // Check spring bones (hair physics)
+                        if (vrm.springBoneManager) {
+                            const joints = vrm.springBoneManager.joints || [];
+                            console.log('Spring Bones found:', joints.length, 'joints');
+                            // Apply gravity for natural hair fall
+                            joints.forEach(joint => {
+                                if (joint.settings) {
+                                    joint.settings.gravityDir = new THREE.Vector3(0, -1, 0);
+                                    joint.settings.gravityPower = 0.1;
+                                }
+                            });
+                        } else {
+                            console.log('No springBoneManager — hair physics not available in this model.');
+                        }
+
+                        // Point lookAt to our dummy target
+                        if (vrm.lookAt) {
+                            vrm.lookAt.target = lookTarget;
+                        }
+
+                        console.log('VRM loaded!');
+                    } else {
+                        document.getElementById('error').style.display = 'block';
+                    }
+                },
+                null,
+                (err) => {
+                    console.error('VRM load error:', err);
+                    document.getElementById('error').style.display = 'block';
+                }
+            );
+
+            // Mouse tracking
+            document.addEventListener('mousemove', (e) => {
+                mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+                mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+            });
+
+            // Resize
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Start blink timer
+            blinkTimer = 3 + Math.random() * 3;
+
+            animate();
+        }
+
+        // === ANIMATION LOOP ===
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
             if (vrm) {
-                scene.add(vrm.scene);
-                // Scale X by 1 = normal scale
-                vrm.scene.scale.x = 1;
-                
-                // Check spring bones (hair physics)
-                if (vrm.springBoneManager) {
-                    const joints = vrm.springBoneManager.joints || [];
-                    console.log('Spring Bones found:', joints.length, 'joints');
-                    // Apply gravity for natural hair fall
-                    joints.forEach(joint => {
-                        if (joint.settings) {
-                            joint.settings.gravityDir = new THREE.Vector3(0, -1, 0);
-                            joint.settings.gravityPower = 0.1;
+                try {
+                    // 1. BREATHING
+                    breathPhase += delta * 1.5;
+                    const breathVal = Math.sin(breathPhase) * 0.012;
+                    const spine = vrm.humanoid.getRawBoneNode('spine') || vrm.humanoid.getBoneNode('spine');
+                    if (spine) {
+                        spine.rotation.x = breathVal;
+                        // Chest expand on inhale
+                        spine.scale.x = 1 + Math.sin(breathPhase) * 0.006;
+                        spine.scale.z = 1 + Math.sin(breathPhase) * 0.004;
+                    }
+
+                    // Subtle idle body sway + micro head movement
+                    const neckNode = vrm.humanoid.getRawBoneNode('neck') || vrm.humanoid.getBoneNode('neck');
+                    if (neckNode && currentState === 'idle') {
+                        const idleSway = Math.sin(breathPhase * 0.7) * 0.015;
+                        const microNod = Math.sin(breathPhase * 0.3) * 0.008;
+                        neckNode.rotation.z = THREE.MathUtils.lerp(neckNode.rotation.z, idleSway, delta * 2);
+                        neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, microNod, delta * 1.5);
+                    }
+
+                    // Hips sway (weight shift) — safe null check
+                    const hipsNode = vrm.humanoid.getRawBoneNode('hips') || vrm.humanoid.getBoneNode('hips');
+                    if (hipsNode && currentState === 'idle' && !musicVibing) {
+                        hipsNode.rotation.z = Math.sin(breathPhase * 0.4) * 0.008;
+                    }
+
+                    // 2. AUTO BLINKING
+                    blinkTimer -= delta;
+                    if (blinkTimer <= 0 && !isBlinking) {
+                        isBlinking = true;
+                        blinkDuration = 0;
+                    }
+                    if (isBlinking) {
+                        blinkDuration += delta;
+                        let blinkVal = 0;
+                        if (blinkDuration < 0.06) blinkVal = blinkDuration / 0.06;
+                        else if (blinkDuration < 0.12) blinkVal = 1.0;
+                        else if (blinkDuration < 0.18) blinkVal = 1.0 - (blinkDuration - 0.12) / 0.06;
+                        else {
+                            isBlinking = false;
+                            blinkTimer = 2.5 + Math.random() * 3.5;
+                            blinkVal = 0;
+                            // 15% chance double blink
+                            if (Math.random() < 0.15) {
+                                blinkTimer = 0.15;
+                            }
+                        }
+                        if (vrm.expressionManager) {
+                            vrm.expressionManager.setValue('blink', blinkVal);
+                        } else if (vrm.blendShapeProxy) {
+                            vrm.blendShapeProxy.setValue('blink', blinkVal);
+                        }
+                    }
+
+                    // 3. RANDOM LOOK AROUND SYSTEM
+                    randomLookTimer -= delta;
+                    if (randomLookTimer <= 0) {
+                        if (Math.random() < 0.7) {
+                            // Look slightly left, right, up, down
+                            randomLookY = (Math.random() - 0.5) * 0.4; // left/right yaw
+                            randomLookX = (Math.random() - 0.5) * 0.2; // up/down pitch
+                        } else {
+                            // Reset to center
+                            randomLookY = 0;
+                            randomLookX = 0;
+                        }
+                        randomLookTimer = 2.0 + Math.random() * 4.0; // Change every 2-6 seconds
+                    }
+
+                    // 4. MOUSE EYE/HEAD TRACKING (combined with emotion head tilt and random look)
+                    if (!reactionAnimId) {
+                        const headNode = vrm.humanoid.getRawBoneNode('head') || vrm.humanoid.getBoneNode('head');
+                        if (headNode) {
+                            // Combine mouse tracking + emotion tilt + random look for head
+                            const targetHeadY = (mouseX * 0.3) + randomLookY;
+                            const targetHeadX = (mouseY * 0.15) + emotionHeadTiltX + randomLookX;
+                            const targetHeadZ = emotionHeadTiltZ;
+
+                            headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetHeadY, delta * 3);
+                            headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetHeadX, delta * 3);
+                            headNode.rotation.z = THREE.MathUtils.lerp(headNode.rotation.z, targetHeadZ, delta * 3);
+                        }
+                        
+                        // Move the lookTarget to animate eyeballs naturally
+                        if (lookTarget) {
+                            const eyeTargetX = (mouseX * 2.0) + (randomLookY * 3.0);
+                            const eyeTargetY = 1.35 + (mouseY * 1.0) + (randomLookX * 1.5);
+                            const eyeTargetZ = 5.0; // Distance in front of face
+                            
+                            lookTarget.position.x = THREE.MathUtils.lerp(lookTarget.position.x, eyeTargetX, delta * 5);
+                            lookTarget.position.y = THREE.MathUtils.lerp(lookTarget.position.y, eyeTargetY, delta * 5);
+                            lookTarget.position.z = THREE.MathUtils.lerp(lookTarget.position.z, eyeTargetZ, delta * 5);
+                        }
+                    }
+
+                    // 4. LIP SYNC (smooth lerp with natural jaw movement)
+                    lipSyncValue = THREE.MathUtils.lerp(lipSyncValue, targetLipSync, delta * 15);
+                    // Add slight variation for natural look
+                    let lipVal = lipSyncValue;
+                    if (lipVal > 0.05) {
+                        // Add micro-variation to avoid robotic look
+                        lipVal += Math.sin(clock.elapsedTime * 12) * 0.03;
+                        lipVal = Math.max(0, Math.min(1, lipVal));
+                    }
+                    if (vrm.expressionManager) {
+                        vrm.expressionManager.setValue('aa', lipVal * 0.8);
+                        // Add 'oh' shape for rounder mouth on higher volumes
+                        vrm.expressionManager.setValue('oh', lipVal * 0.3);
+                    } else if (vrm.blendShapeProxy) {
+                        vrm.blendShapeProxy.setValue('a', lipVal * 0.8);
+                        vrm.blendShapeProxy.setValue('o', lipVal * 0.3);
+                    }
+
+                    // 5. EMOTION SYSTEM — smooth blend between expressions
+                    if (vrm.expressionManager || vrm.blendShapeProxy) {
+                        const expr = vrm.expressionManager || vrm.blendShapeProxy;
+
+                        // Smooth intensity transition
+                        emotionIntensity = THREE.MathUtils.lerp(emotionIntensity, targetEmotionIntensity, delta * 4);
+
+                        // Auto-decay emotion after 5 seconds
+                        emotionDecayTimer -= delta;
+                        if (emotionDecayTimer <= 0 && targetEmotionIntensity > 0) {
+                            targetEmotionIntensity = Math.max(0, targetEmotionIntensity - delta * 0.3);
+                            if (targetEmotionIntensity < 0.05) {
+                                targetEmotionIntensity = 0;
+                                currentEmotion = 'neutral';
+                            }
+                        }
+
+                        // Reset all expressions first (avoid stacking)
+                        expr.setValue('happy', 0);
+                        expr.setValue('angry', 0);
+                        expr.setValue('sad', 0);
+                        expr.setValue('surprised', 0);
+                        expr.setValue('relaxed', 0);
+
+                        // Apply current emotion
+                        switch (currentEmotion) {
+                            case 'happy':
+                                expr.setValue('happy', emotionIntensity * 0.8);
+                                // Slight head tilt for cute happy look
+                                emotionHeadTiltZ = emotionIntensity * 0.05;
+                                emotionHeadTiltX = 0;
+                                break;
+
+                            case 'angry':
+                                expr.setValue('angry', emotionIntensity * 0.7);
+                                // Head slightly forward (aggressive)
+                                emotionHeadTiltX = emotionIntensity * 0.1;
+                                emotionHeadTiltZ = 0;
+                                break;
+
+                            case 'sad':
+                                expr.setValue('sad', emotionIntensity * 0.7);
+                                // Head tilted DOWN noticeably
+                                emotionHeadTiltX = -emotionIntensity * 0.2;
+                                emotionHeadTiltZ = emotionIntensity * 0.04;
+                                break;
+
+                            case 'surprised':
+                                expr.setValue('surprised', emotionIntensity * 0.8);
+                                // Head slightly back
+                                emotionHeadTiltX = -emotionIntensity * 0.08;
+                                emotionHeadTiltZ = 0;
+                                break;
+
+                            case 'relaxed':
+                                expr.setValue('relaxed', emotionIntensity * 0.6);
+                                expr.setValue('happy', emotionIntensity * 0.2);
+                                emotionHeadTiltX = 0;
+                                emotionHeadTiltZ = emotionIntensity * 0.03;
+                                break;
+
+                            case 'neutral':
+                            default:
+                                // Subtle smile when listening
+                                if (currentState === 'listening') {
+                                    expr.setValue('happy', 0.2);
+                                }
+                                emotionHeadTiltX = 0;
+                                emotionHeadTiltZ = 0;
+                                break;
+                        }
+
+                        // Thinking state: head tilt
+                        if (currentState === 'thinking' && currentEmotion === 'neutral') {
+                            emotionHeadTiltZ = 0.05;
+                        }
+                    }
+
+                    // Update VRM
+                    vrm.update(delta);
+
+                    // Music vibe — mood-based animations (runs after vrm.update)
+                    if (musicVibing || vibeIntensity > 0.01) {
+                        runMusicVibe(clock.elapsedTime);
+                    }
+
+                    // AFTER vrm.update — override arm bones every frame
+                    const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+                    const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+                    if (lArm) lArm.rotation.z = -1.0;
+                    if (rArm) rArm.rotation.z = 1.0;
+                } catch (e) {
+                    // Don't let animation errors kill the loop
+                    console.warn('Animation error:', e.message);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // === JAVASCRIPT API (Python calls these) ===
+
+        window.changeStyle = function (type) {
+            if (!vrm) return "not_loaded";
+            console.log("changeStyle called with type:", type);
+
+            // Preset Palettes
+            const palettes = {
+                traditional: {
+                    tops: 0xB22222,    // Crimson Red
+                    accents: 0xFFD700, // Gold
+                    extra: 0xFF4500,   // Saffron
+                    shoes: 0x8B4513    // Leather Brown
+                },
+                western: {
+                    tops: 0x111111,    // Charcoal Black
+                    accents: 0xEEEEEE, // Silk White
+                    extra: 0x1A365D,   // Royal Navy
+                    shoes: 0x050505    // Black
+                },
+                eastern: {
+                    tops: 0xFFB7C5,    // Sakura Pink
+                    accents: 0xE6E6FA, // Lavender
+                    extra: 0xAAF0D1,   // Pastel Mint
+                    shoes: 0xFFFFFF    // White
+                }
+            };
+
+            let targetPalette = null;
+            let styleMode = type.toLowerCase();
+
+            if (styleMode.includes('saree') || styleMode.includes('traditional') || styleMode.includes('indian')) {
+                targetPalette = palettes.traditional;
+            } else if (styleMode.includes('western') || styleMode.includes('formal') || styleMode.includes('modern')) {
+                targetPalette = palettes.western;
+            } else if (styleMode.includes('eastern') || styleMode.includes('kawaii') || styleMode.includes('casual') || styleMode.includes('cute')) {
+                targetPalette = palettes.eastern;
+            }
+
+            let toggled = false;
+            vrm.scene.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    const materials = Array.isArray(child.material) ? child.material : [child.material];
+                    materials.forEach(mat => {
+                        const matName = mat.name.toLowerCase();
+
+                        if (type === 'glasses') {
+                            if (matName.includes('glasses') || matName.includes('eyewear') || matName.includes('megane')) {
+                                mat.visible = !mat.visible;
+                                mat.needsUpdate = true;
+                                toggled = true;
+                            }
+                        } else if (type === 'hair_accessory' || type === 'accessory') {
+                            if (matName.includes('catear') || matName.includes('ear') || matName.includes('accessory') || matName.includes('ribbon') || matName.includes('ornament')) {
+                                // Keep glasses untouched when toggling general accessories
+                                if (!matName.includes('glasses') && !matName.includes('eyewear')) {
+                                    mat.visible = !mat.visible;
+                                    mat.needsUpdate = true;
+                                    toggled = true;
+                                }
+                            }
+                        } else if (type === 'jacket' || type === 'outerwear') {
+                            if (matName.includes('jacket') || matName.includes('outer') || matName.includes('coat') || matName.includes('cardigan') || matName.includes('hoodie')) {
+                                mat.visible = !mat.visible;
+                                mat.needsUpdate = true;
+                                toggled = true;
+                            }
+                        } else if (targetPalette) {
+                            // Apply coordinated palette colors based on material name
+                            const isSkinOrHair = matName.includes('skin') || matName.includes('hair') || matName.includes('face') || matName.includes('eye');
+                            if (!isSkinOrHair) {
+                                let colorHex = null;
+                                if (matName.includes('shoes')) {
+                                    colorHex = targetPalette.shoes;
+                                } else if (matName.includes('cloth_02') || matName.includes('cloth_04')) {
+                                    colorHex = targetPalette.accents;
+                                } else if (matName.includes('cloth_03')) {
+                                    colorHex = targetPalette.extra;
+                                } else if (matName.includes('cloth') || matName.includes('tops') || matName.includes('fuku') || matName.includes('dress')) {
+                                    colorHex = targetPalette.tops;
+                                }
+
+                                if (colorHex !== null && mat.color) {
+                                    mat.color.setHex(colorHex);
+                                    mat.needsUpdate = true;
+                                    toggled = true;
+                                }
+                            }
+                        } else if (type === 'color_shift' || type === 'dress' || type === 'clothes') {
+                            const isCloth = matName.includes('cloth') || matName.includes('tops') || matName.includes('shoes') || matName.includes('dress') || matName.includes('fuku') || matName.includes('pants');
+                            const isSkinOrHair = matName.includes('skin') || matName.includes('hair') || matName.includes('face') || matName.includes('eye');
+                            if (isCloth && !isSkinOrHair) {
+                                if (mat.color) {
+                                    mat.color.setHex(Math.random() * 0xffffff);
+                                    mat.needsUpdate = true;
+                                    toggled = true;
+                                }
+                            }
                         }
                     });
-                } else {
-                    console.log('No springBoneManager — hair physics not available in this model.');
                 }
+            });
 
-                console.log('VRM loaded!');
+            return toggled ? "success" : "no_matching_material";
+        };
+
+
+        window.setAvatarState = function (state) {
+            currentState = state;
+            const statusEl = document.getElementById('status');
+            const indicator = document.getElementById('indicator');
+
+            switch (state) {
+                case 'idle':
+                    statusEl.textContent = 'Ready';
+                    indicator.style.background = '#00ff88';
+                    indicator.style.boxShadow = '0 0 8px #00ff8888';
+                    break;
+                case 'listening':
+                    statusEl.textContent = 'Listening...';
+                    indicator.style.background = '#00ff88';
+                    indicator.style.boxShadow = '0 0 12px #00ff88';
+                    break;
+                case 'thinking':
+                    statusEl.textContent = 'Thinking...';
+                    indicator.style.background = '#ffaa00';
+                    indicator.style.boxShadow = '0 0 8px #ffaa0088';
+                    break;
+                case 'speaking':
+                    statusEl.textContent = 'Speaking...';
+                    indicator.style.background = '#4488ff';
+                    indicator.style.boxShadow = '0 0 8px #4488ff88';
+                    break;
+            }
+        };
+
+        window.setLipSync = function (volume) {
+            // Smooth target — don't let mouth snap shut instantly
+            let v = Math.min(1.0, Math.max(0.0, volume));
+            // If closing mouth, slow down the transition
+            if (v < targetLipSync * 0.3) {
+                targetLipSync = targetLipSync * 0.5; // gradual close
             } else {
-                document.getElementById('error').style.display = 'block';
+                targetLipSync = v;
             }
-        },
-        null,
-        (err) => {
-            console.error('VRM load error:', err);
-            document.getElementById('error').style.display = 'block';
-        }
-    );
+        };
 
-    // Mouse tracking
-    document.addEventListener('mousemove', (e) => {
-        mouseX = (e.clientX / window.innerWidth) * 2 - 1;
-        mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
-    });
+        window.setEmotion = function (emotion, intensity) {
+            // Set avatar emotion: happy, angry, sad, surprised, relaxed, neutral
+            // intensity: 0.0-1.0 (default 0.8)
+            const validEmotions = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
+            emotion = emotion.toLowerCase();
 
-    // Resize
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    // Start blink timer
-    blinkTimer = 3 + Math.random() * 3;
-
-    animate();
-}
-
-// === ANIMATION LOOP ===
-function animate() {
-    requestAnimationFrame(animate);
-    const delta = clock.getDelta();
-
-    if (vrm) {
-      try {
-        // 1. BREATHING
-        breathPhase += delta * 1.5;
-        const breathVal = Math.sin(breathPhase) * 0.012;
-        const spine = vrm.humanoid.getRawBoneNode('spine') || vrm.humanoid.getBoneNode('spine');
-        if (spine) {
-            spine.rotation.x = breathVal;
-            // Chest expand on inhale
-            spine.scale.x = 1 + Math.sin(breathPhase) * 0.006;
-            spine.scale.z = 1 + Math.sin(breathPhase) * 0.004;
-        }
-        
-        // Subtle idle body sway + micro head movement
-        const neckNode = vrm.humanoid.getRawBoneNode('neck') || vrm.humanoid.getBoneNode('neck');
-        if (neckNode && currentState === 'idle') {
-            const idleSway = Math.sin(breathPhase * 0.7) * 0.015;
-            const microNod = Math.sin(breathPhase * 0.3) * 0.008;
-            neckNode.rotation.z = THREE.MathUtils.lerp(neckNode.rotation.z, idleSway, delta * 2);
-            neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, microNod, delta * 1.5);
-        }
-        
-        // Hips sway (weight shift) — safe null check
-        const hipsNode = vrm.humanoid.getRawBoneNode('hips') || vrm.humanoid.getBoneNode('hips');
-        if (hipsNode && currentState === 'idle' && !musicVibing) {
-            hipsNode.rotation.z = Math.sin(breathPhase * 0.4) * 0.008;
-        }
-
-        // 2. AUTO BLINKING
-        blinkTimer -= delta;
-        if (blinkTimer <= 0 && !isBlinking) {
-            isBlinking = true;
-            blinkDuration = 0;
-        }
-        if (isBlinking) {
-            blinkDuration += delta;
-            let blinkVal = 0;
-            if (blinkDuration < 0.06) blinkVal = blinkDuration / 0.06;
-            else if (blinkDuration < 0.12) blinkVal = 1.0;
-            else if (blinkDuration < 0.18) blinkVal = 1.0 - (blinkDuration - 0.12) / 0.06;
-            else {
-                isBlinking = false;
-                blinkTimer = 2.5 + Math.random() * 3.5;
-                blinkVal = 0;
-                // 15% chance double blink
-                if (Math.random() < 0.15) {
-                    blinkTimer = 0.15;
-                }
+            if (!validEmotions.includes(emotion)) {
+                emotion = 'neutral';
             }
-            if (vrm.expressionManager) {
-                vrm.expressionManager.setValue('blink', blinkVal);
-            } else if (vrm.blendShapeProxy) {
-                vrm.blendShapeProxy.setValue('blink', blinkVal);
-            }
-        }
 
-        // 3. MOUSE EYE/HEAD TRACKING (combined with emotion head tilt)
-        const headNode = vrm.humanoid.getRawBoneNode('head') || vrm.humanoid.getBoneNode('head');
-        if (headNode) {
-            // Combine mouse tracking + emotion tilt
-            const targetHeadY = mouseX * 0.3;
-            const targetHeadX = (mouseY * 0.15) + emotionHeadTiltX;
-            const targetHeadZ = emotionHeadTiltZ;
-            
-            headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetHeadY, delta * 3);
-            headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetHeadX, delta * 3);
-            headNode.rotation.z = THREE.MathUtils.lerp(headNode.rotation.z, targetHeadZ, delta * 3);
-        }
-        const leftEye = vrm.humanoid.getRawBoneNode('leftEye') || vrm.humanoid.getBoneNode('leftEye');
-        const rightEye = vrm.humanoid.getRawBoneNode('rightEye') || vrm.humanoid.getBoneNode('rightEye');
-        if (leftEye) {
-            leftEye.rotation.y = THREE.MathUtils.lerp(leftEye.rotation.y, mouseX * 0.4, delta * 5);
-            leftEye.rotation.x = THREE.MathUtils.lerp(leftEye.rotation.x, -mouseY * 0.2, delta * 5);
-        }
-        if (rightEye) {
-            rightEye.rotation.y = THREE.MathUtils.lerp(rightEye.rotation.y, mouseX * 0.4, delta * 5);
-            rightEye.rotation.x = THREE.MathUtils.lerp(rightEye.rotation.x, -mouseY * 0.2, delta * 5);
-        }
+            currentEmotion = emotion;
+            targetEmotionIntensity = (intensity !== undefined) ? Math.min(1.0, Math.max(0.0, intensity)) : 0.8;
+            emotionDecayTimer = 6.0;  // Emotion lasts 6 seconds before fading
 
-        // 4. LIP SYNC (smooth lerp with natural jaw movement)
-        lipSyncValue = THREE.MathUtils.lerp(lipSyncValue, targetLipSync, delta * 15);
-        // Add slight variation for natural look
-        let lipVal = lipSyncValue;
-        if (lipVal > 0.05) {
-            // Add micro-variation to avoid robotic look
-            lipVal += Math.sin(clock.elapsedTime * 12) * 0.03;
-            lipVal = Math.max(0, Math.min(1, lipVal));
-        }
-        if (vrm.expressionManager) {
-            vrm.expressionManager.setValue('aa', lipVal * 0.8);
-            // Add 'oh' shape for rounder mouth on higher volumes
-            vrm.expressionManager.setValue('oh', lipVal * 0.3);
-        } else if (vrm.blendShapeProxy) {
-            vrm.blendShapeProxy.setValue('a', lipVal * 0.8);
-            vrm.blendShapeProxy.setValue('o', lipVal * 0.3);
-        }
-
-        // 5. EMOTION SYSTEM — smooth blend between expressions
-        if (vrm.expressionManager || vrm.blendShapeProxy) {
-            const expr = vrm.expressionManager || vrm.blendShapeProxy;
-            
-            // Smooth intensity transition
-            emotionIntensity = THREE.MathUtils.lerp(emotionIntensity, targetEmotionIntensity, delta * 4);
-            
-            // Auto-decay emotion after 5 seconds
-            emotionDecayTimer -= delta;
-            if (emotionDecayTimer <= 0 && targetEmotionIntensity > 0) {
-                targetEmotionIntensity = Math.max(0, targetEmotionIntensity - delta * 0.3);
-                if (targetEmotionIntensity < 0.05) {
-                    targetEmotionIntensity = 0;
-                    currentEmotion = 'neutral';
-                }
-            }
-            
-            // Reset all expressions first (avoid stacking)
-            expr.setValue('happy', 0);
-            expr.setValue('angry', 0);
-            expr.setValue('sad', 0);
-            expr.setValue('surprised', 0);
-            expr.setValue('relaxed', 0);
-            
-            // Apply current emotion
-            switch(currentEmotion) {
+            // Update indicator color based on emotion
+            const indicator = document.getElementById('indicator');
+            switch (emotion) {
                 case 'happy':
-                    expr.setValue('happy', emotionIntensity * 0.8);
-                    // Slight head tilt for cute happy look
-                    emotionHeadTiltZ = emotionIntensity * 0.05;
-                    emotionHeadTiltX = 0;
+                    indicator.style.background = '#ffdd00';
+                    indicator.style.boxShadow = '0 0 8px #ffdd0088';
                     break;
-                    
                 case 'angry':
-                    expr.setValue('angry', emotionIntensity * 0.7);
-                    // Head slightly forward (aggressive)
-                    emotionHeadTiltX = emotionIntensity * 0.1;
-                    emotionHeadTiltZ = 0;
+                    indicator.style.background = '#ff4444';
+                    indicator.style.boxShadow = '0 0 8px #ff444488';
                     break;
-                    
                 case 'sad':
-                    expr.setValue('sad', emotionIntensity * 0.7);
-                    // Head tilted DOWN noticeably
-                    emotionHeadTiltX = -emotionIntensity * 0.2;
-                    emotionHeadTiltZ = emotionIntensity * 0.04;
+                    indicator.style.background = '#6688ff';
+                    indicator.style.boxShadow = '0 0 8px #6688ff88';
                     break;
-                    
                 case 'surprised':
-                    expr.setValue('surprised', emotionIntensity * 0.8);
-                    // Head slightly back
-                    emotionHeadTiltX = -emotionIntensity * 0.08;
-                    emotionHeadTiltZ = 0;
+                    indicator.style.background = '#ff88ff';
+                    indicator.style.boxShadow = '0 0 8px #ff88ff88';
                     break;
-                    
                 case 'relaxed':
-                    expr.setValue('relaxed', emotionIntensity * 0.6);
-                    expr.setValue('happy', emotionIntensity * 0.2);
-                    emotionHeadTiltX = 0;
-                    emotionHeadTiltZ = emotionIntensity * 0.03;
+                    indicator.style.background = '#88ffcc';
+                    indicator.style.boxShadow = '0 0 8px #88ffcc88';
                     break;
-                    
-                case 'neutral':
                 default:
-                    // Subtle smile when listening
-                    if (currentState === 'listening') {
-                        expr.setValue('happy', 0.2);
-                    }
-                    emotionHeadTiltX = 0;
-                    emotionHeadTiltZ = 0;
+                    indicator.style.background = '#00ff88';
+                    indicator.style.boxShadow = '0 0 8px #00ff8888';
+            }
+        };
+
+        window.setStatusText = function (text) {
+            const el = document.getElementById('status');
+            if (el) el.textContent = text || '';
+        };
+
+        // === CHAT BUBBLE API ===
+        let chatBubbleTimer = null;
+
+        window.showChatBubble = function (text, duration) {
+            const bubble = document.getElementById('chat-bubble');
+            if (!bubble) return;
+
+            // Clear any existing timer
+            if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
+
+            // Set text content
+            bubble.innerHTML = text;
+            bubble.classList.remove('fade-out');
+            bubble.classList.add('visible');
+
+            // Auto fade out after duration (default 5 seconds)
+            const fadeAfter = (duration || 5) * 1000;
+            chatBubbleTimer = setTimeout(() => {
+                bubble.classList.add('fade-out');
+                bubble.classList.remove('visible');
+            }, fadeAfter);
+        };
+
+        window.showTypingBubble = function () {
+            const bubble = document.getElementById('chat-bubble');
+            if (!bubble) return;
+
+            if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
+
+            bubble.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+            bubble.classList.remove('fade-out');
+            bubble.classList.add('visible');
+        };
+
+        window.hideChatBubble = function () {
+            const bubble = document.getElementById('chat-bubble');
+            if (!bubble) return;
+
+            if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
+            bubble.classList.add('fade-out');
+            bubble.classList.remove('visible');
+        };
+
+        // === MUSIC VIBING SYSTEM (mood-based, VISIBLE animations) ===
+        let musicBPM = 120;
+        let beatInterval = null;
+        let currentMood = "happy";
+        let vibeIntensity = 0;  // 0 to 1, fades in/out
+
+        // Safe bone getter
+        function getVRMBone(boneName) {
+            if (!vrm || !vrm.humanoid) return null;
+            try {
+                let name = boneName;
+                if (boneName.toLowerCase() === 'lefteye') name = 'leftEye';
+                if (boneName.toLowerCase() === 'righteye') name = 'rightEye';
+                if (boneName.toLowerCase() === 'leftupperarm') name = 'leftUpperArm';
+                if (boneName.toLowerCase() === 'rightupperarm') name = 'rightUpperArm';
+                
+                return vrm.humanoid.getRawBoneNode(name)
+                    || vrm.humanoid.getBoneNode(name)
+                    || vrm.humanoid.getNormalizedBoneNode(name)
+                    || vrm.humanoid.getRawBoneNode(boneName.toLowerCase())
+                    || vrm.humanoid.getBoneNode(boneName.toLowerCase())
+                    || vrm.humanoid.getNormalizedBoneNode(boneName.toLowerCase());
+            } catch (e) { return null; }
+        }
+
+        // Safe blend shape setter
+        function setVibeBlendShape(name, value) {
+            try {
+                const expr = vrm.expressionManager || vrm.blendShapeProxy;
+                if (expr) expr.setValue(name.toLowerCase(), Math.max(0, Math.min(1, value)));
+            } catch (e) { }
+        }
+
+        window.startMusicVibe = function (mood, bpm) {
+            console.log("startMusicVibe:", mood, bpm);
+            musicVibing = true;
+            currentMood = mood || "happy";
+            musicBPM = bpm || 120;
+        };
+
+        window.stopMusicVibe = function () {
+            console.log("stopMusicVibe called");
+            musicVibing = false;
+            // Expressions will fade via vibeIntensity
+        };
+
+        function runMusicVibe(time) {
+            // Fade intensity in/out smoothly
+            const target = musicVibing ? 1.0 : 0.0;
+            vibeIntensity += (target - vibeIntensity) * 0.02;
+
+            if (vibeIntensity < 0.01) {
+                // Reset expressions when fully faded
+                setVibeBlendShape('happy', 0);
+                setVibeBlendShape('sad', 0);
+                setVibeBlendShape('surprised', 0);
+
+                // Reset head and neck rotations to 0 so avatar doesn't get stuck
+                const head = getVRMBone('head');
+                if (head) {
+                    head.rotation.x = 0;
+                    head.rotation.z = 0;
+                }
+                const neck = getVRMBone('neck');
+                if (neck) {
+                    neck.rotation.x = 0;
+                    neck.rotation.z = 0;
+                }
+                return;
+            }
+
+            const I = vibeIntensity; // shorthand
+
+            switch (currentMood) {
+                case 'sad': vibeSad(time, I); break;
+                case 'happy': vibeHappy(time, I); break;
+                case 'exciting': vibeExciting(time, I); break;
+                case 'romantic': vibeRomantic(time, I); break;
+                case 'calm': vibeCalm(time, I); break;
+                default: vibeHappy(time, I);
+            }
+        }
+
+        function vibeSad(time, I) {
+            const speed = 0.15;
+            const sway = Math.sin(time * speed * Math.PI * 2);
+
+            const head = getVRMBone('head');
+            if (head) {
+                head.rotation.z = sway * 0.02 * I;
+                head.rotation.x = 0.05 * I; // slightly looking down
+            }
+            setVibeBlendShape('sad', 0.5 * I);
+            setVibeBlendShape('happy', 0);
+        }
+
+        function vibeHappy(time, I) {
+            const speed = 1.4;
+            const bounce = Math.abs(Math.sin(time * speed * Math.PI));
+            const sway = Math.sin(time * speed * Math.PI);
+
+            // Only head/neck — subtle nod + sway
+            const head = getVRMBone('head');
+            if (head) {
+                head.rotation.x = -bounce * 0.02 * I; // gentle nod
+                head.rotation.z = sway * 0.015 * I;    // slight side tilt
+            }
+            const neck = getVRMBone('neck');
+            if (neck) {
+                neck.rotation.z = sway * 0.01 * I;
+            }
+            setVibeBlendShape('happy', 0.6 * I);
+            setVibeBlendShape('sad', 0);
+        }
+
+        function vibeExciting(time, I) {
+            const speed = 1.8;
+            const bounce = Math.abs(Math.sin(time * speed * Math.PI));
+            const sway = Math.sin(time * speed * Math.PI);
+
+            // Slightly more energetic head movement
+            const head = getVRMBone('head');
+            if (head) {
+                head.rotation.x = -bounce * 0.03 * I; // nod
+                head.rotation.z = sway * 0.02 * I;
+            }
+            const neck = getVRMBone('neck');
+            if (neck) {
+                neck.rotation.z = sway * 0.012 * I;
+            }
+            setVibeBlendShape('happy', 0.5 * I);
+            setVibeBlendShape('surprised', 0.15 * I);
+        }
+
+        function vibeRomantic(time, I) {
+            const speed = 0.35;
+            const sway = Math.sin(time * speed * Math.PI * 2);
+
+            const head = getVRMBone('head');
+            if (head) {
+                head.rotation.z = sway * 0.02 * I;
+                head.rotation.x = -0.015 * I;
+            }
+            setVibeBlendShape('happy', 0.35 * I);
+        }
+
+        function vibeCalm(time, I) {
+            const speed = 0.2;
+            const sway = Math.sin(time * speed * Math.PI * 2);
+
+            const head = getVRMBone('head');
+            if (head) {
+                head.rotation.z = sway * 0.015 * I;
+            }
+            setVibeBlendShape('relaxed', 0.35 * I);
+        }
+
+        // === WINDOW SHAKE/DRAG REACTION ANIMATIONS ===
+        let reactionAnimId = null;
+        let reactionStartTime = 0;
+
+        window.setReactionAnimation = function (type) {
+            // Cancel any ongoing reaction animation
+            if (reactionAnimId) {
+                cancelAnimationFrame(reactionAnimId);
+                reactionAnimId = null;
+            }
+
+            if (!vrm) return;
+
+            const headNode = getVRMBone('head');
+            const neckNode = getVRMBone('neck');
+            if (!headNode) return;
+
+            reactionStartTime = performance.now();
+
+            switch (type) {
+                case 'left':
+                    animateReaction(headNode, { targetY: -0.4, targetZ: 0.05 }, 300, 2000);
                     break;
+                case 'right':
+                    animateReaction(headNode, { targetY: 0.4, targetZ: -0.05 }, 300, 2000);
+                    break;
+                case 'up':
+                    animateReaction(headNode, { targetX: -0.2, targetZ: 0 }, 300, 2000);
+                    if (vrm.expressionManager) vrm.expressionManager.setValue('surprised', 0.7);
+                    break;
+                case 'down':
+                    animateReaction(headNode, { targetX: 0.25, targetZ: 0.04 }, 300, 2000);
+                    break;
+                case 'fast_shake':
+                    animateDizzy(headNode, 1500);
+                    break;
+                case 'very_fast_shake':
+                    animateScared(headNode, 1000);
+                    break;
+                case 'settle':
+                    animateSettle(headNode, 500);
+                    break;
+            }
+        };
+
+        function animateReaction(node, targets, tweenMs, holdMs) {
+            const startY = node.rotation.y;
+            const startX = node.rotation.x;
+            const startZ = node.rotation.z;
+            const targetY = targets.targetY || startY;
+            const targetX = targets.targetX || startX;
+            const targetZ = targets.targetZ || startZ;
+            const start = performance.now();
+
+            const startLookX = lookTarget ? lookTarget.position.x : 0;
+            const startLookY = lookTarget ? lookTarget.position.y : 1.35;
+
+            // If head turns left, eyes look further left
+            let targetLookX = startLookX;
+            if (targets.targetY !== undefined) {
+                targetLookX = targets.targetY * 6.0;
+            }
+            let targetLookY = startLookY;
+            if (targets.targetX !== undefined) {
+                targetLookY = 1.35 - (targets.targetX * 3.0);
+            }
+
+            function step() {
+                const elapsed = performance.now() - start;
+                if (elapsed < tweenMs) {
+                    // Tween to target
+                    const t = elapsed / tweenMs;
+                    const ease = t * (2 - t); // ease-out
+                    if (targets.targetY !== undefined) node.rotation.y = startY + (targetY - startY) * ease;
+                    if (targets.targetX !== undefined) node.rotation.x = startX + (targetX - startX) * ease;
+                    if (targets.targetZ !== undefined) node.rotation.z = startZ + (targetZ - startZ) * ease;
+                    
+                    if (lookTarget) {
+                        lookTarget.position.x = startLookX + (targetLookX - startLookX) * ease;
+                        lookTarget.position.y = startLookY + (targetLookY - startLookY) * ease;
+                    }
+                    reactionAnimId = requestAnimationFrame(step);
+                } else if (elapsed < tweenMs + holdMs) {
+                    // Hold position
+                    if (targets.targetY !== undefined) node.rotation.y = targetY;
+                    if (targets.targetX !== undefined) node.rotation.x = targetX;
+                    if (targets.targetZ !== undefined) node.rotation.z = targetZ;
+
+                    if (lookTarget) {
+                        lookTarget.position.x = targetLookX;
+                        lookTarget.position.y = targetLookY;
+                    }
+                    reactionAnimId = requestAnimationFrame(step);
+                } else {
+                    // Done — let normal animation loop take over
+                    reactionAnimId = null;
+                }
+            }
+            reactionAnimId = requestAnimationFrame(step);
+        }
+
+        function animateDizzy(node, durationMs) {
+            const start = performance.now();
+            const originalY = node.rotation.y;
+
+            function step() {
+                const elapsed = performance.now() - start;
+                if (elapsed < durationMs) {
+                    // Wobble: sine wave on Y rotation
+                    const t = elapsed / 1000;
+                    const decay = 1 - (elapsed / durationMs); // fade out
+                    node.rotation.y = originalY + Math.sin(t * 16 * Math.PI) * 0.25 * decay;
+                    node.rotation.z = Math.sin(t * 12 * Math.PI) * 0.08 * decay;
+                    reactionAnimId = requestAnimationFrame(step);
+                } else {
+                    node.rotation.z = 0;
+                    reactionAnimId = null;
+                }
+            }
+            reactionAnimId = requestAnimationFrame(step);
+        }
+
+        function animateScared(node, durationMs) {
+            const start = performance.now();
+            // Quick jump + wide eyes
+            if (vrm.expressionManager) {
+                vrm.expressionManager.setValue('surprised', 1.0);
+            }
+
+            function step() {
+                const elapsed = performance.now() - start;
+                if (elapsed < 150) {
+                    // Jump up
+                    if (vrm && vrm.scene) vrm.scene.position.y = 0.05;
+                } else if (elapsed < 300) {
+                    // Come back down
+                    if (vrm && vrm.scene) vrm.scene.position.y = 0;
+                } else if (elapsed < durationMs) {
+                    // Slight tremble
+                    const tremble = Math.sin(elapsed * 0.05) * 0.02 * (1 - elapsed / durationMs);
+                    node.rotation.z = tremble;
+                    reactionAnimId = requestAnimationFrame(step);
+                    return;
+                } else {
+                    node.rotation.z = 0;
+                    if (vrm.expressionManager) {
+                        vrm.expressionManager.setValue('surprised', 0);
+                    }
+                    reactionAnimId = null;
+                    return;
+                }
+                reactionAnimId = requestAnimationFrame(step);
+            }
+            reactionAnimId = requestAnimationFrame(step);
+        }
+
+        function animateSettle(node, durationMs) {
+            const start = performance.now();
+            const startY = node.rotation.y;
+            const startX = node.rotation.x;
+            const startZ = node.rotation.z;
+
+            const startLookX = lookTarget ? lookTarget.position.x : 0;
+            const startLookY = lookTarget ? lookTarget.position.y : 1.35;
+
+            // Set relaxed expression
+            if (vrm.expressionManager) {
+                vrm.expressionManager.setValue('relaxed', 0.5);
+                vrm.expressionManager.setValue('happy', 0.3);
+            }
+
+            function step() {
+                const elapsed = performance.now() - start;
+                if (elapsed < durationMs) {
+                    const t = elapsed / durationMs;
+                    node.rotation.y = startY * (1 - t);
+                    node.rotation.x = startX * (1 - t);
+                    node.rotation.z = startZ * (1 - t);
+
+                    if (lookTarget) {
+                        lookTarget.position.x = startLookX * (1 - t);
+                        lookTarget.position.y = startLookY + (1.35 - startLookY) * t;
+                    }
+                    reactionAnimId = requestAnimationFrame(step);
+                } else {
+                    node.rotation.y = 0;
+                    node.rotation.x = 0;
+                    node.rotation.z = 0;
+                    if (lookTarget) {
+                        lookTarget.position.x = 0;
+                        lookTarget.position.y = 1.35;
+                    }
+                    reactionAnimId = null;
+                }
+            }
+            reactionAnimId = requestAnimationFrame(step);
+        }
+
+        // === START ===
+        init();
+
+        // === DRAG WINDOW (anywhere) & MIC CLICK ===
+        let isDragging = false, isMoved = false, dragX = 0, dragY = 0;
+        document.addEventListener('mousedown', (e) => {
+            if (e.target.closest('#quick-actions') || e.target.id === 'resize-grip') return;
+            isDragging = true;
+            isMoved = false;
+            dragX = e.screenX - window.screenX;
+            dragY = e.screenY - window.screenY;
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                isMoved = true;
+                document.title = 'DRAG:' + (e.screenX - dragX) + ':' + (e.screenY - dragY);
+            }
+        });
+        document.addEventListener('mouseup', (e) => {
+            if (isDragging) {
+                isDragging = false;
+                if (!isMoved) {
+                    document.title = 'MIC_CLICK';
+                    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
+                }
+            }
+        });
+
+        // === RESIZE WINDOW (bottom right corner) ===
+        let isResizing = false, startWidth = 0, startHeight = 0, startMouseX = 0, startMouseY = 0;
+        const resizeGrip = document.getElementById('resize-grip');
+        resizeGrip.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            isResizing = true;
+            startWidth = window.innerWidth;
+            startHeight = window.innerHeight;
+            startMouseX = e.screenX;
+            startMouseY = e.screenY;
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (isResizing) {
+                const newWidth = Math.max(280, startWidth + (e.screenX - startMouseX));
+                const newHeight = Math.max(400, startHeight + (e.screenY - startMouseY));
+                document.title = 'RESIZE:' + newWidth + ':' + newHeight;
+            }
+        });
+        document.addEventListener('mouseup', () => { isResizing = false; });
+
+        // (Handled in the mousedown/mouseup above)
+
+        // === QUICK ACTION BUTTONS — show on hover in bottom area ===
+        let quickActionsEl = document.getElementById('quick-actions');
+        let hideTimeout = null;
+
+        document.addEventListener('mousemove', (e) => {
+            const bottomZone = window.innerHeight * 0.6; // bottom 40%
+            if (e.clientY > bottomZone) {
+                quickActionsEl.classList.add('visible');
+                if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
+            } else {
+                if (!hideTimeout) {
+                    hideTimeout = setTimeout(() => {
+                        quickActionsEl.classList.remove('visible');
+                        hideTimeout = null;
+                    }, 800);
+                }
+            }
+        });
+
+        document.getElementById('btn-screenshot').addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.title = 'ACTION:take_screenshot';
+            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
+        });
+        document.getElementById('btn-music').addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.title = 'ACTION:spotify_mood:chill';
+            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
+        });
+        document.getElementById('btn-weather').addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.title = 'ACTION:get_weather';
+            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
+        });
+        document.getElementById('btn-notes').addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.title = 'ACTION:list_notes';
+            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
+        });
+
+        // === DYNAMIC AUDIO VISUALIZER (Waveform) ===
+        const canvas = document.getElementById('particles');
+        const ctx = canvas.getContext('2d');
+        let waveTime = 0;
+
+        function drawVisualizer() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw waveform if speaking or listening
+            if (lipSyncValue > 0.01 || currentState === 'listening' || currentState === 'thinking') {
+                const centerY = canvas.height - 30; // Bottom area
+                const centerX = canvas.width / 2;
+                
+                let color = '#00d4ff'; // Speaking (cyan)
+                let amplitude = lipSyncValue * 60 + 5;
+                let frequency = 0.03;
+                
+                if (currentState === 'listening') {
+                    color = '#00ff88';
+                    amplitude = 20 + Math.sin(waveTime*2) * 5;
+                    frequency = 0.02;
+                } else if (currentState === 'thinking') {
+                    color = '#ffaa00';
+                    amplitude = 10 + Math.sin(waveTime) * 10;
+                    frequency = 0.05;
+                }
+                
+                ctx.beginPath();
+                ctx.moveTo(0, centerY);
+                for (let x = 0; x <= canvas.width; x += 5) {
+                    const dist = Math.abs(x - centerX);
+                    const taper = Math.max(0, 1 - (dist / (canvas.width * 0.4)));
+                    
+                    const y = centerY + Math.sin(x * frequency + waveTime) * amplitude * taper;
+                    ctx.lineTo(x, y);
+                }
+                
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                
+                // Neon Glow
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = color;
+                ctx.stroke();
+                
+                // Draw a second faded line for depth
+                ctx.beginPath();
+                ctx.moveTo(0, centerY);
+                for (let x = 0; x <= canvas.width; x += 5) {
+                    const dist = Math.abs(x - centerX);
+                    const taper = Math.max(0, 1 - (dist / (canvas.width * 0.4)));
+                    const y = centerY + Math.sin(x * frequency * 1.5 - waveTime * 1.2) * (amplitude * 0.5) * taper;
+                    ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = color;
+                ctx.globalAlpha = 0.4;
+                ctx.stroke();
+                ctx.globalAlpha = 1.0;
             }
             
-            // Thinking state: head tilt
-            if (currentState === 'thinking' && currentEmotion === 'neutral') {
-                emotionHeadTiltZ = 0.05;
-            }
+            waveTime += 0.1;
+            requestAnimationFrame(drawVisualizer);
         }
+        drawVisualizer();
 
-        // Update VRM
-        vrm.update(delta);
-        
-        // Music vibe — mood-based animations (runs after vrm.update)
-        if (musicVibing || vibeIntensity > 0.01) {
-            runMusicVibe(clock.elapsedTime);
-        }
-        
-        // AFTER vrm.update — override arm bones every frame
-        const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-        const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-        if (lArm) lArm.rotation.z = -1.0;
-        if (rArm) rArm.rotation.z = 1.0;
-      } catch(e) {
-        // Don't let animation errors kill the loop
-        console.warn('Animation error:', e.message);
-      }
-    }
-
-    renderer.render(scene, camera);
-}
-
-// === JAVASCRIPT API (Python calls these) ===
-
-window.setAvatarState = function(state) {
-    currentState = state;
-    const statusEl = document.getElementById('status');
-    const indicator = document.getElementById('indicator');
-
-    switch(state) {
-        case 'idle':
-            statusEl.textContent = 'Ready';
-            indicator.style.background = '#00ff88';
-            indicator.style.boxShadow = '0 0 8px #00ff8888';
-            break;
-        case 'listening':
-            statusEl.textContent = 'Listening...';
-            indicator.style.background = '#00ff88';
-            indicator.style.boxShadow = '0 0 12px #00ff88';
-            break;
-        case 'thinking':
-            statusEl.textContent = 'Thinking...';
-            indicator.style.background = '#ffaa00';
-            indicator.style.boxShadow = '0 0 8px #ffaa0088';
-            break;
-        case 'speaking':
-            statusEl.textContent = 'Speaking...';
-            indicator.style.background = '#4488ff';
-            indicator.style.boxShadow = '0 0 8px #4488ff88';
-            break;
-    }
-};
-
-window.setLipSync = function(volume) {
-    // Smooth target — don't let mouth snap shut instantly
-    let v = Math.min(1.0, Math.max(0.0, volume));
-    // If closing mouth, slow down the transition
-    if (v < targetLipSync * 0.3) {
-        targetLipSync = targetLipSync * 0.5; // gradual close
-    } else {
-        targetLipSync = v;
-    }
-};
-
-window.setEmotion = function(emotion, intensity) {
-    // Set avatar emotion: happy, angry, sad, surprised, relaxed, neutral
-    // intensity: 0.0-1.0 (default 0.8)
-    const validEmotions = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
-    emotion = emotion.toLowerCase();
-    
-    if (!validEmotions.includes(emotion)) {
-        emotion = 'neutral';
-    }
-    
-    currentEmotion = emotion;
-    targetEmotionIntensity = (intensity !== undefined) ? Math.min(1.0, Math.max(0.0, intensity)) : 0.8;
-    emotionDecayTimer = 6.0;  // Emotion lasts 6 seconds before fading
-    
-    // Update indicator color based on emotion
-    const indicator = document.getElementById('indicator');
-    switch(emotion) {
-        case 'happy':
-            indicator.style.background = '#ffdd00';
-            indicator.style.boxShadow = '0 0 8px #ffdd0088';
-            break;
-        case 'angry':
-            indicator.style.background = '#ff4444';
-            indicator.style.boxShadow = '0 0 8px #ff444488';
-            break;
-        case 'sad':
-            indicator.style.background = '#6688ff';
-            indicator.style.boxShadow = '0 0 8px #6688ff88';
-            break;
-        case 'surprised':
-            indicator.style.background = '#ff88ff';
-            indicator.style.boxShadow = '0 0 8px #ff88ff88';
-            break;
-        case 'relaxed':
-            indicator.style.background = '#88ffcc';
-            indicator.style.boxShadow = '0 0 8px #88ffcc88';
-            break;
-        default:
-            indicator.style.background = '#00ff88';
-            indicator.style.boxShadow = '0 0 8px #00ff8888';
-    }
-};
-
-window.setStatusText = function(text) {
-    const el = document.getElementById('status');
-    if (el) el.textContent = text || '';
-};
-
-// === CHAT BUBBLE API ===
-let chatBubbleTimer = null;
-
-window.showChatBubble = function(text, duration) {
-    const bubble = document.getElementById('chat-bubble');
-    if (!bubble) return;
-    
-    // Clear any existing timer
-    if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
-    
-    // Set text content
-    bubble.innerHTML = text;
-    bubble.classList.remove('fade-out');
-    bubble.classList.add('visible');
-    
-    // Auto fade out after duration (default 5 seconds)
-    const fadeAfter = (duration || 5) * 1000;
-    chatBubbleTimer = setTimeout(() => {
-        bubble.classList.add('fade-out');
-        bubble.classList.remove('visible');
-    }, fadeAfter);
-};
-
-window.showTypingBubble = function() {
-    const bubble = document.getElementById('chat-bubble');
-    if (!bubble) return;
-    
-    if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
-    
-    bubble.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
-    bubble.classList.remove('fade-out');
-    bubble.classList.add('visible');
-};
-
-window.hideChatBubble = function() {
-    const bubble = document.getElementById('chat-bubble');
-    if (!bubble) return;
-    
-    if (chatBubbleTimer) clearTimeout(chatBubbleTimer);
-    bubble.classList.add('fade-out');
-    bubble.classList.remove('visible');
-};
-
-// === MUSIC VIBING SYSTEM (mood-based, VISIBLE animations) ===
-let musicBPM = 120;
-let beatInterval = null;
-let currentMood = "happy";
-let vibeIntensity = 0;  // 0 to 1, fades in/out
-
-// Safe bone getter
-function getVRMBone(boneName) {
-    if (!vrm || !vrm.humanoid) return null;
-    try {
-        return vrm.humanoid.getRawBoneNode(boneName.toLowerCase()) 
-            || vrm.humanoid.getBoneNode(boneName.toLowerCase())
-            || vrm.humanoid.getNormalizedBoneNode(boneName.toLowerCase());
-    } catch(e) { return null; }
-}
-
-// Safe blend shape setter
-function setVibeBlendShape(name, value) {
-    try {
-        const expr = vrm.expressionManager || vrm.blendShapeProxy;
-        if (expr) expr.setValue(name.toLowerCase(), Math.max(0, Math.min(1, value)));
-    } catch(e) {}
-}
-
-window.startMusicVibe = function(mood, bpm) {
-    console.log("startMusicVibe:", mood, bpm);
-    musicVibing = true;
-    currentMood = mood || "happy";
-    musicBPM = bpm || 120;
-};
-
-window.stopMusicVibe = function() {
-    console.log("stopMusicVibe called");
-    musicVibing = false;
-    // Expressions will fade via vibeIntensity
-};
-
-function runMusicVibe(time) {
-    // Fade intensity in/out smoothly
-    const target = musicVibing ? 1.0 : 0.0;
-    vibeIntensity += (target - vibeIntensity) * 0.02;
-    
-    if (vibeIntensity < 0.01) {
-        // Reset expressions when fully faded
-        setVibeBlendShape('happy', 0);
-        setVibeBlendShape('sad', 0);
-        setVibeBlendShape('surprised', 0);
-        
-        // Reset head and neck rotations to 0 so avatar doesn't get stuck
-        const head = getVRMBone('head');
-        if (head) {
-            head.rotation.x = 0;
-            head.rotation.z = 0;
-        }
-        const neck = getVRMBone('neck');
-        if (neck) {
-            neck.rotation.x = 0;
-            neck.rotation.z = 0;
-        }
-        return;
-    }
-
-    const I = vibeIntensity; // shorthand
-
-    switch(currentMood) {
-        case 'sad': vibeSad(time, I); break;
-        case 'happy': vibeHappy(time, I); break;
-        case 'exciting': vibeExciting(time, I); break;
-        case 'romantic': vibeRomantic(time, I); break;
-        case 'calm': vibeCalm(time, I); break;
-        default: vibeHappy(time, I);
-    }
-}
-
-function vibeSad(time, I) {
-    const speed = 0.15;
-    const sway = Math.sin(time * speed * Math.PI * 2);
-    
-    const head = getVRMBone('head');
-    if (head) {
-        head.rotation.z = sway * 0.02 * I;
-        head.rotation.x = 0.05 * I; // slightly looking down
-    }
-    setVibeBlendShape('sad', 0.5 * I);
-    setVibeBlendShape('happy', 0);
-}
-
-function vibeHappy(time, I) {
-    const speed = 1.4;
-    const bounce = Math.abs(Math.sin(time * speed * Math.PI));
-    const sway = Math.sin(time * speed * Math.PI);
-    
-    // Only head/neck — subtle nod + sway
-    const head = getVRMBone('head');
-    if (head) {
-        head.rotation.x = -bounce * 0.02 * I; // gentle nod
-        head.rotation.z = sway * 0.015 * I;    // slight side tilt
-    }
-    const neck = getVRMBone('neck');
-    if (neck) {
-        neck.rotation.z = sway * 0.01 * I;
-    }
-    setVibeBlendShape('happy', 0.6 * I);
-    setVibeBlendShape('sad', 0);
-}
-
-function vibeExciting(time, I) {
-    const speed = 1.8;
-    const bounce = Math.abs(Math.sin(time * speed * Math.PI));
-    const sway = Math.sin(time * speed * Math.PI);
-    
-    // Slightly more energetic head movement
-    const head = getVRMBone('head');
-    if (head) {
-        head.rotation.x = -bounce * 0.03 * I; // nod
-        head.rotation.z = sway * 0.02 * I;
-    }
-    const neck = getVRMBone('neck');
-    if (neck) {
-        neck.rotation.z = sway * 0.012 * I;
-    }
-    setVibeBlendShape('happy', 0.5 * I);
-    setVibeBlendShape('surprised', 0.15 * I);
-}
-
-function vibeRomantic(time, I) {
-    const speed = 0.35;
-    const sway = Math.sin(time * speed * Math.PI * 2);
-    
-    const head = getVRMBone('head');
-    if (head) {
-        head.rotation.z = sway * 0.02 * I;
-        head.rotation.x = -0.015 * I;
-    }
-    setVibeBlendShape('happy', 0.35 * I);
-}
-
-function vibeCalm(time, I) {
-    const speed = 0.2;
-    const sway = Math.sin(time * speed * Math.PI * 2);
-    
-    const head = getVRMBone('head');
-    if (head) {
-        head.rotation.z = sway * 0.015 * I;
-    }
-    setVibeBlendShape('relaxed', 0.35 * I);
-}
-
-// === WINDOW SHAKE/DRAG REACTION ANIMATIONS ===
-let reactionAnimId = null;
-let reactionStartTime = 0;
-
-window.setReactionAnimation = function(type) {
-    // Cancel any ongoing reaction animation
-    if (reactionAnimId) {
-        cancelAnimationFrame(reactionAnimId);
-        reactionAnimId = null;
-    }
-
-    if (!vrm) return;
-
-    const headNode = vrm.humanoid.getBoneNode('head');
-    const neckNode = vrm.humanoid.getBoneNode('neck');
-    if (!headNode) return;
-
-    reactionStartTime = performance.now();
-
-    switch(type) {
-        case 'left':
-            animateReaction(headNode, { targetY: -0.4, targetZ: 0.05 }, 300, 2000);
-            break;
-        case 'right':
-            animateReaction(headNode, { targetY: 0.4, targetZ: -0.05 }, 300, 2000);
-            break;
-        case 'up':
-            animateReaction(headNode, { targetX: -0.2, targetZ: 0 }, 300, 2000);
-            if (vrm.expressionManager) vrm.expressionManager.setValue('surprised', 0.7);
-            break;
-        case 'down':
-            animateReaction(headNode, { targetX: 0.25, targetZ: 0.04 }, 300, 2000);
-            break;
-        case 'fast_shake':
-            animateDizzy(headNode, 1500);
-            break;
-        case 'very_fast_shake':
-            animateScared(headNode, 1000);
-            break;
-        case 'settle':
-            animateSettle(headNode, 500);
-            break;
-    }
-};
-
-function animateReaction(node, targets, tweenMs, holdMs) {
-    const startY = node.rotation.y;
-    const startX = node.rotation.x;
-    const startZ = node.rotation.z;
-    const targetY = targets.targetY || startY;
-    const targetX = targets.targetX || startX;
-    const targetZ = targets.targetZ || startZ;
-    const start = performance.now();
-
-    function step() {
-        const elapsed = performance.now() - start;
-        if (elapsed < tweenMs) {
-            // Tween to target
-            const t = elapsed / tweenMs;
-            const ease = t * (2 - t); // ease-out
-            if (targets.targetY !== undefined) node.rotation.y = startY + (targetY - startY) * ease;
-            if (targets.targetX !== undefined) node.rotation.x = startX + (targetX - startX) * ease;
-            if (targets.targetZ !== undefined) node.rotation.z = startZ + (targetZ - startZ) * ease;
-            reactionAnimId = requestAnimationFrame(step);
-        } else if (elapsed < tweenMs + holdMs) {
-            // Hold position (mouse tracking will gradually take over via lerp)
-            reactionAnimId = requestAnimationFrame(step);
-        } else {
-            // Done — let normal animation loop take over
-            reactionAnimId = null;
-        }
-    }
-    reactionAnimId = requestAnimationFrame(step);
-}
-
-function animateDizzy(node, durationMs) {
-    const start = performance.now();
-    const originalY = node.rotation.y;
-
-    function step() {
-        const elapsed = performance.now() - start;
-        if (elapsed < durationMs) {
-            // Wobble: sine wave on Y rotation
-            const t = elapsed / 1000;
-            const decay = 1 - (elapsed / durationMs); // fade out
-            node.rotation.y = originalY + Math.sin(t * 16 * Math.PI) * 0.25 * decay;
-            node.rotation.z = Math.sin(t * 12 * Math.PI) * 0.08 * decay;
-            reactionAnimId = requestAnimationFrame(step);
-        } else {
-            node.rotation.z = 0;
-            reactionAnimId = null;
-        }
-    }
-    reactionAnimId = requestAnimationFrame(step);
-}
-
-function animateScared(node, durationMs) {
-    const start = performance.now();
-    // Quick jump + wide eyes
-    if (vrm.expressionManager) {
-        vrm.expressionManager.setValue('surprised', 1.0);
-    }
-
-    function step() {
-        const elapsed = performance.now() - start;
-        if (elapsed < 150) {
-            // Jump up
-            if (vrm && vrm.scene) vrm.scene.position.y = 0.05;
-        } else if (elapsed < 300) {
-            // Come back down
-            if (vrm && vrm.scene) vrm.scene.position.y = 0;
-        } else if (elapsed < durationMs) {
-            // Slight tremble
-            const tremble = Math.sin(elapsed * 0.05) * 0.02 * (1 - elapsed/durationMs);
-            node.rotation.z = tremble;
-            reactionAnimId = requestAnimationFrame(step);
-            return;
-        } else {
-            node.rotation.z = 0;
-            if (vrm.expressionManager) {
-                vrm.expressionManager.setValue('surprised', 0);
-            }
-            reactionAnimId = null;
-            return;
-        }
-        reactionAnimId = requestAnimationFrame(step);
-    }
-    reactionAnimId = requestAnimationFrame(step);
-}
-
-function animateSettle(node, durationMs) {
-    const start = performance.now();
-    const startY = node.rotation.y;
-    const startX = node.rotation.x;
-    const startZ = node.rotation.z;
-
-    // Set relaxed expression
-    if (vrm.expressionManager) {
-        vrm.expressionManager.setValue('relaxed', 0.5);
-        vrm.expressionManager.setValue('happy', 0.3);
-    }
-
-    function step() {
-        const elapsed = performance.now() - start;
-        if (elapsed < durationMs) {
-            const t = elapsed / durationMs;
-            node.rotation.y = startY * (1 - t);
-            node.rotation.x = startX * (1 - t);
-            node.rotation.z = startZ * (1 - t);
-            reactionAnimId = requestAnimationFrame(step);
-        } else {
-            reactionAnimId = null;
-        }
-    }
-    reactionAnimId = requestAnimationFrame(step);
-}
-
-// === START ===
-init();
-
-// === DRAG WINDOW (top bar) ===
-let isDragging = false, dragX = 0, dragY = 0;
-const dragBar = document.getElementById('drag-bar');
-dragBar.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    dragX = e.screenX - window.screenX;
-    dragY = e.screenY - window.screenY;
-});
-document.addEventListener('mousemove', (e) => {
-    if (isDragging) {
-        document.title = 'DRAG:' + (e.screenX - dragX) + ':' + (e.screenY - dragY);
-    }
-});
-document.addEventListener('mouseup', () => { isDragging = false; });
-
-// === RESIZE WINDOW (bottom right corner) ===
-let isResizing = false, startWidth = 0, startHeight = 0, startMouseX = 0, startMouseY = 0;
-const resizeGrip = document.getElementById('resize-grip');
-resizeGrip.addEventListener('mousedown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    isResizing = true;
-    startWidth = window.innerWidth;
-    startHeight = window.innerHeight;
-    startMouseX = e.screenX;
-    startMouseY = e.screenY;
-});
-document.addEventListener('mousemove', (e) => {
-    if (isResizing) {
-        const newWidth = Math.max(280, startWidth + (e.screenX - startMouseX));
-        const newHeight = Math.max(400, startHeight + (e.screenY - startMouseY));
-        document.title = 'RESIZE:' + newWidth + ':' + newHeight;
-    }
-});
-document.addEventListener('mouseup', () => { isResizing = false; });
-
-// === CLICK TO SPEAK (click anywhere on avatar = mic trigger) ===
-document.addEventListener('click', (e) => {
-    // Ignore clicks on drag bar and quick action buttons
-    if (e.target === dragBar || dragBar.contains(e.target)) return;
-    if (e.target.closest('#quick-actions')) return;
-    // Signal Python via title change
-    document.title = 'MIC_CLICK';
-    // Reset title after short delay so it can be triggered again
-    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-});
-
-// === QUICK ACTION BUTTONS — show on hover in bottom area ===
-let quickActionsEl = document.getElementById('quick-actions');
-let hideTimeout = null;
-
-document.addEventListener('mousemove', (e) => {
-    const bottomZone = window.innerHeight * 0.6; // bottom 40%
-    if (e.clientY > bottomZone) {
-        quickActionsEl.classList.add('visible');
-        if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
-    } else {
-        if (!hideTimeout) {
-            hideTimeout = setTimeout(() => {
-                quickActionsEl.classList.remove('visible');
-                hideTimeout = null;
-            }, 800);
-        }
-    }
-});
-
-document.getElementById('btn-screenshot').addEventListener('click', (e) => {
-    e.stopPropagation();
-    document.title = 'ACTION:take_screenshot';
-    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-});
-document.getElementById('btn-music').addEventListener('click', (e) => {
-    e.stopPropagation();
-    document.title = 'ACTION:spotify_mood:chill';
-    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-});
-document.getElementById('btn-weather').addEventListener('click', (e) => {
-    e.stopPropagation();
-    document.title = 'ACTION:get_weather';
-    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-});
-document.getElementById('btn-notes').addEventListener('click', (e) => {
-    e.stopPropagation();
-    document.title = 'ACTION:list_notes';
-    setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-});
-
-</script>
+    </script>
 </body>
+
 </html>

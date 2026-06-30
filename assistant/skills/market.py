@@ -8,9 +8,12 @@ from typing import Dict
 
 import requests
 
+from assistant.skills.resilience import resilient_skill
+
 logger = logging.getLogger(__name__)
 
 
+@resilient_skill(retries=2, delay=1.5, circuit_breaker_threshold=3)
 def get_crypto_price(coin: str = "bitcoin") -> Dict[str, str]:
     """
     Get cryptocurrency price from CoinGecko (free, no key).
@@ -48,6 +51,7 @@ def get_crypto_price(coin: str = "bitcoin") -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
+@resilient_skill(retries=2, delay=1.5, circuit_breaker_threshold=3)
 def get_stock_market() -> Dict[str, str]:
     """Get Indian stock market overview (Sensex, Nifty) from free API."""
     try:
@@ -86,6 +90,7 @@ def get_stock_market() -> Dict[str, str]:
         return {"status": "error", "message": f"Market data nahi mil paya: {str(e)}"}
 
 
+@resilient_skill(retries=2, delay=1.0, circuit_breaker_threshold=5)
 def get_news(topic: str = "india") -> Dict[str, str]:
     """
     Get top news headlines using free RSS/API.
@@ -142,6 +147,7 @@ def get_news(topic: str = "india") -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
+@resilient_skill(retries=2, delay=1.5, circuit_breaker_threshold=3)
 def get_gold_price() -> Dict[str, str]:
     """Get current gold price in India."""
     try:

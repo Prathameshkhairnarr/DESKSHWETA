@@ -29,83 +29,79 @@ TRIGGERS = ["shweta", "schweta", "shveta", "swetha", "sweta"]
 def _wakeword_worker(queue: multiprocessing.Queue, stop_event: multiprocessing.Event) -> None:
     """
     SEPARATE PROCESS — own mic, no conflict.
-    Records 2-sec clips, checks for "shweta" via Google STT.
+    Records audio using PyAudio and uses offline Vosk model.
     """
-    import base64
     import json
-    import numpy as np
-    import requests
-    import sounddevice as sd
+    import os
+    import time
+    import queue as pyqueue
+    
+    try:
+        from vosk import Model, KaldiRecognizer
+        import sounddevice as sd
+    except ImportError:
+        print("[WakeWord] Error: vosk or sounddevice not installed. Run: pip install vosk sounddevice")
+        return
 
     last_detection = 0.0
 
-    print("[WakeWord] Process started. Listening for 'Hey Shweta'...")
+    print("[WakeWord] Process started. Loading local offline model...")
+    
+    # Path to the model
+    model_path = os.path.join(os.path.dirname(__file__), "wakeword_models", "vosk-model-small-en-in-0.4")
+    if not os.path.exists(model_path):
+        print(f"[WakeWord] Error: Vosk model not found at {model_path}")
+        print("[WakeWord] Please download it and place it in assistant/skills/wakeword_models/")
+        return
 
-    while not stop_event.is_set():
-        try:
-            # Record 2 seconds
-            audio = sd.rec(
-                int(LISTEN_DURATION * SAMPLE_RATE),
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16"
-            )
-            sd.wait()
+    try:
+        model = Model(model_path)
+        rec = KaldiRecognizer(model, 16000)
+    except Exception as e:
+        print(f"[WakeWord] Failed to load Vosk model: {e}")
+        return
 
-            if stop_event.is_set():
-                break
+    try:
+        stream = sd.RawInputStream(samplerate=16000, blocksize=4000, dtype='int16', channels=1)
+    except Exception as e:
+        print(f"[WakeWord] sounddevice failed to open stream: {e}", flush=True)
+        return
 
-            audio_flat = audio.flatten()
+    print("[WakeWord] Listening for 'Hey Shweta' offline...", flush=True)
 
-            # Check if there's actual speech (not silence)
-            rms = np.sqrt(np.mean(audio_flat.astype(np.float32) ** 2))
-            if rms < SILENCE_RMS:
-                continue  # Too quiet, skip STT
-
-            # Cooldown check
-            now = time.time()
-            if now - last_detection < COOLDOWN:
-                continue
-
-            # Send to Google STT
-            pcm_bytes = audio_flat.tobytes()
-            audio_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
-
-            body = {
-                "config": {
-                    "encoding": "LINEAR16",
-                    "sampleRateHertz": SAMPLE_RATE,
-                    "languageCode": "hi-IN",
-                    "alternativeLanguageCodes": ["en-IN"],
-                },
-                "audio": {"content": audio_b64}
-            }
-
-            url = "https://speech.googleapis.com/v1p1beta1/speech:recognize?key=AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw"
-
+    with stream:
+        stream.start()
+        while not stop_event.is_set():
             try:
-                resp = requests.post(url, json=body, timeout=5)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    results = data.get("results", [])
-                    if results:
-                        text = results[0].get("alternatives", [{}])[0].get("transcript", "")
-                        text_lower = text.lower().strip()
+                data, overflowed = stream.read(4000)
+                data_bytes = bytes(data)
+                
+                # Cooldown check
+                now = time.time()
+                if now - last_detection < COOLDOWN:
+                    continue
 
-                        # Check if wake word is in the text
-                        if any(trigger in text_lower for trigger in TRIGGERS):
+                if rec.AcceptWaveform(data_bytes):
+                    res = json.loads(rec.Result())
+                    text = res.get("text", "").lower()
+                    if text:
+                        # Only print if it heard something substantial to avoid spam
+                        # print(f"[WakeWord] Heard: '{text}'", flush=True)
+                        if any(t in text for t in TRIGGERS):
+                            print(f"[WakeWord] 🎯 DETECTED! Heard: '{text}'", flush=True)
                             last_detection = time.time()
-                            print(f"[WakeWord] 🎯 DETECTED! Heard: '{text}'")
                             queue.put("WAKE")
-            except requests.Timeout:
+                else:
+                    partial = json.loads(rec.PartialResult())
+                    text = partial.get("partial", "").lower()
+                    if any(t in text for t in TRIGGERS):
+                        print(f"[WakeWord] 🎯 DETECTED (Partial)! Heard: '{text}'", flush=True)
+                        last_detection = time.time()
+                        queue.put("WAKE")
+                        # reset recognizer to avoid double trigger
+                        rec.Reset()
+            except Exception as e:
                 pass
-            except Exception:
-                pass
-
-        except Exception as e:
-            if not stop_event.is_set():
-                print(f"[WakeWord] Error: {e}. Retrying in 3s...")
-                time.sleep(3)
 
 
 class WakeWordManager:

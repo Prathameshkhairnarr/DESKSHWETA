@@ -97,6 +97,9 @@ def _get_coordinates(city: str) -> Dict[str, float]:
     return CITY_COORDS["pune"]
 
 
+from assistant.skills.resilience import resilient_skill
+
+@resilient_skill(retries=2, delay=1.0, circuit_breaker_threshold=3)
 def get_weather(city: str = "") -> Dict[str, str]:
     """
     Get current weather for a city using Open-Meteo API.

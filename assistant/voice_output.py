@@ -1,9 +1,11 @@
 """
 Voice Output with TTS Cache + Real-time Lip Sync.
 
-OPTIMIZED v2.0:
+PRODUCTION v3.0:
+- Sarvam AI TTS as PRIMARY voice (real Indian female voice via bulbul:v3)
+- Edge-TTS as FALLBACK (if Sarvam fails or no API key)
+- pyttsx3 as LAST RESORT offline fallback
 - Interruptible playback (stop current audio, start new immediately)
-- Edge-TTS with 6s timeout + 1 retry before pyttsx3 fallback
 - LRU cache with size limit (max 500 files / 100MB)
 - Cache integrity check (skip corrupt/empty files)
 - Lip sync thread as daemon with exception handling + timeout join
@@ -13,8 +15,8 @@ OPTIMIZED v2.0:
 
 Flow:
 1. On startup: pre-generate MP3 for 22 common phrases (background, non-blocking)
-2. On speak(): check cache (instant) → edge-tts (with timeout) → pyttsx3
-3. Audio playback via winsound with real-time lip sync at 30fps
+2. On speak(): check cache (instant) → Sarvam AI → edge-tts (with timeout) → pyttsx3
+3. Audio playback via sounddevice with real-time lip sync at 30fps
 4. Interruptible: new speak() stops current audio immediately
 """
 
@@ -38,9 +40,24 @@ from config import PROJECT_ROOT
 logger = logging.getLogger(__name__)
 
 # --- Voice Configuration ---
-VOICE_PRIMARY = "en-IN-NeerjaNeural"
-VOICE_FALLBACK = "hi-IN-SwaraNeural"
+VOICE_PRIMARY = "en-IN-NeerjaNeural"   # Edge-TTS primary (fallback)
+VOICE_FALLBACK = "hi-IN-SwaraNeural"   # Edge-TTS fallback
 RATE = "+35%"
+
+# --- Sarvam AI TTS Configuration (PRIMARY) ---
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
+SARVAM_MODEL = "bulbul:v3"             # Best Indian language TTS model
+SARVAM_SPEAKER = "ritu"                # Fast/Energetic Female Hindi voice
+SARVAM_LANGUAGE = "hi-IN"              # Hindi (supports en-IN, ta-IN, te-IN, etc.)
+SARVAM_TIMEOUT = 8                     # Seconds before falling back to Edge-TTS
+SARVAM_PACE = 1.15                     # Slightly faster than default for natural feel
+
+# --- Amazon Polly TTS Configuration (Premium Free Tier) ---
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
+POLLY_VOICE_ID = "Kajal"               # Indian Female Neural Voice (hi-IN)
+POLLY_ENGINE = "neural"                # High-quality neural engine
 
 # --- Cache Configuration ---
 CACHE_DIR = PROJECT_ROOT / "cache" / "tts_cache"
@@ -160,6 +177,11 @@ def _get_cache_stats() -> dict:
 
 def prebuild_cache() -> None:
     """Pre-generate MP3 for common phrases. Per-phrase timeout. Non-blocking."""
+    # Don't pre-cache with Edge-TTS if we are using Sarvam (we don't want mixed voices)
+    if SARVAM_API_KEY:
+        logger.info("[TTS Cache] Sarvam AI active. Skipping Edge-TTS pre-cache.")
+        return
+
     try:
         import edge_tts
     except ImportError:
@@ -228,18 +250,50 @@ class VoiceOutput:
         self.is_speaking: bool = False
         self._speak_lock = threading.Lock()
         self._interrupt_event = threading.Event()
+        self._sarvam_available: bool = False
         self._edge_available: bool = False
         self._soundfile_available: bool = False
         self._sounddevice_available: bool = False
         self._lip_sync_callback: Optional[Callable] = None
         self._current_thread: Optional[threading.Thread] = None
 
+        # --- Sarvam AI TTS (PRIMARY — real Indian voice) ---
+        if SARVAM_API_KEY:
+            try:
+                from sarvamai import SarvamAI
+                self._sarvam_client = SarvamAI(api_subscription_key=SARVAM_API_KEY)
+                self._sarvam_available = True
+                logger.info(f"[TTS] ✅ Sarvam AI initialized — using '{SARVAM_SPEAKER}' voice (PRIMARY).")
+            except ImportError:
+                logger.warning("[TTS] sarvamai SDK not installed. Run: pip install sarvamai")
+                self._sarvam_client = None
+            except Exception as e:
+                logger.warning(f"[TTS] Sarvam AI init failed: {e}")
+                self._sarvam_client = None
+        
+        self._polly_client = None
+        self._polly_available = False
+        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and AWS_REGION:
+            try:
+                import boto3
+                self._polly_client = boto3.client(
+                    "polly",
+                    aws_access_key_id=AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+                    region_name=AWS_REGION
+                )
+                self._polly_available = True
+                logger.info(f"[TTS] Amazon Polly initialized — using '{POLLY_VOICE_ID}' voice (PRIMARY).")
+            except Exception as e:
+                logger.warning(f"[TTS] Polly init failed: {e}")
+
+        # --- Edge TTS (FALLBACK — free, neural voices) ---
         try:
             import edge_tts
             self._edge_available = True
-            logger.info("Edge-TTS initialized — using natural neural voices (FREE).")
+            logger.info("[TTS] Edge-TTS initialized — fallback neural voice ready.")
         except ImportError:
-            logger.warning("edge_tts not installed. Using pyttsx3 only.")
+            logger.warning("[TTS] edge_tts not installed. Using pyttsx3 only.")
 
         try:
             import soundfile
@@ -264,7 +318,7 @@ class VoiceOutput:
               voice: Optional[str] = None, callback: Optional[Callable] = None) -> None:
         """
         Speak text. Interrupts any current speech first.
-        Checks cache (instant) → edge-tts (with timeout) → pyttsx3.
+        Priority: cache (instant) → Sarvam AI → Edge-TTS → pyttsx3.
         """
         if not text:
             if callback:
@@ -302,10 +356,35 @@ class VoiceOutput:
         thread.start()
 
     def _speak_reaction_impl(self, text: str, intensity: str) -> None:
-        """Speak reaction — Edge-TTS with fast rate → pyttsx3 fallback."""
+        """Speak reaction — Sarvam AI (with custom pace) → Polly → Edge-TTS → pyttsx3."""
         self.is_speaking = True
         self._interrupt_event.clear()
         try:
+            # Try Sarvam AI first
+            if self._sarvam_available:
+                # Adjust pace based on intensity
+                pace_map = {"calm": 1.0, "normal": SARVAM_PACE, "surprised": 1.35,
+                            "panicking": 1.45, "screaming": 1.5, "exhausted": 0.9, "relieved": 1.1}
+                custom_pace = pace_map.get(intensity, SARVAM_PACE)
+                
+                # Check text for implicit intensity
+                if intensity == "normal":
+                    if text.isupper() or text.startswith("AAA"):
+                        custom_pace = 1.5
+                    elif any(w in text.upper() for w in ["ARRE", "BHAI", "RUKO"]):
+                        custom_pace = 1.45
+                    elif "..." in text:
+                        custom_pace = 0.9
+                
+                if self._speak_sarvam(text, pace=custom_pace):
+                    return
+
+            # Try Amazon Polly second
+            if self._polly_available:
+                if self._speak_polly(text):
+                    return
+
+            # Fallback to Edge-TTS
             if self._edge_available:
                 if intensity == "normal":
                     if text.isupper() or text.startswith("AAA"):
@@ -372,20 +451,95 @@ class VoiceOutput:
                 except Exception:
                     pass
 
+    def _speak_polly(self, text: str) -> bool:
+        """
+        Generate audio with Amazon Polly (Premium Neural Voice).
+        Uses SSML to speed up the speaking rate to 115% and increase pitch to sound younger.
+        Returns True if successful.
+        """
+        if not self._polly_client or self._interrupt_event.is_set():
+            return False
+            
+        tmp_path = tempfile.mktemp(suffix=".mp3")
+        try:
+            # Escape XML characters for SSML
+            safe_text = text.replace("&", "and").replace("<", "").replace(">", "")
+            ssml_text = f'<speak><prosody rate="115%">{safe_text}</prosody></speak>'
+            
+            response = self._polly_client.synthesize_speech(
+                Text=ssml_text,
+                TextType="ssml",
+                OutputFormat="mp3",
+                VoiceId=POLLY_VOICE_ID,
+                Engine=POLLY_ENGINE,
+                LanguageCode="hi-IN"
+            )
+            
+            if "AudioStream" in response:
+                with open(tmp_path, "wb") as f:
+                    f.write(response["AudioStream"].read())
+                    
+                if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > CACHE_MIN_FILE_SIZE:
+                    self._play_with_lip_sync(tmp_path)
+                    
+                    if len(text.strip()) <= AUTO_CACHE_MAX_LEN:
+                        _save_to_cache(text, tmp_path)
+                        
+                    logger.info(f"[TTS] ✅ AWS Polly spoke: '{text[:40]}...'")
+                    return True
+            return False
+        except Exception as e:
+            logger.warning(f"[TTS] AWS Polly failed: {e} — falling back")
+            return False
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+
     def _speak_thread(self, text: str, callback: Optional[Callable],
                       voice: Optional[str] = None) -> None:
-        """Internal speak thread — cache → edge-tts (with retry) → pyttsx3."""
+        """Internal speak thread — cache → Polly → Sarvam → edge-tts → pyttsx3."""
         self.is_speaking = True
         self._interrupt_event.clear()
         try:
             text = self._add_natural_pauses(text)
+
+            # STEP 1: Check cache (instant playback) — skip if custom voice
             cached_path = _is_cached(text) if not voice else None
             if cached_path:
                 self._play_with_lip_sync(str(cached_path))
+            # STEP 1.5: Try Sarvam AI (Energetic young Indian female voice — HIGHEST PRIORITY)
+            elif self._sarvam_available:
+                if not self._speak_sarvam(text):
+                    # Sarvam failed → fallback to Amazon Polly
+                    if self._polly_available:
+                        if not self._speak_polly(text):
+                            if self._edge_available:
+                                if not self._speak_edge_with_retry(text, voice):
+                                    self._speak_pyttsx3(text)
+                            else:
+                                self._speak_pyttsx3(text)
+                    elif self._edge_available:
+                        if not self._speak_edge_with_retry(text, voice):
+                            self._speak_pyttsx3(text)
+                    else:
+                        self._speak_pyttsx3(text)
+            # STEP 2: Try Amazon Polly (Premium Neural Voice — PRIMARY FALLBACK)
+            elif self._polly_available:
+                if not self._speak_polly(text):
+                    if self._edge_available:
+                        if not self._speak_edge_with_retry(text, voice):
+                            self._speak_pyttsx3(text)
+                    else:
+                        self._speak_pyttsx3(text)
+            # STEP 3: Edge-TTS with timeout + 1 retry
             elif self._edge_available:
                 if not self._speak_edge_with_retry(text, voice):
                     self._speak_pyttsx3(text)
             else:
+                # STEP 4: Last resort — pyttsx3 offline
                 self._speak_pyttsx3(text)
         except Exception as e:
             logger.error(f"TTS error: {e}")
@@ -402,6 +556,58 @@ class VoiceOutput:
                     pass
             if callback:
                 callback()
+
+    def _speak_sarvam(self, text: str, pace: Optional[float] = None) -> bool:
+        """
+        Generate audio with Sarvam AI API (Premium Indian TTS).
+        Returns True if successful, False if failed/fallback needed.
+        """
+        if not self._sarvam_client or self._interrupt_event.is_set():
+            return False
+
+        # Clean text to fix Hinglish pronunciation issues (like 'bajke' -> 'baj kar')
+        text = self._clean_for_tts(text)
+
+        tmp_path = tempfile.mktemp(suffix=".wav")
+        try:
+            from sarvamai.play import save
+
+            use_pace = pace if pace is not None else SARVAM_PACE
+
+            response = self._sarvam_client.text_to_speech.convert(
+                text=text,
+                target_language_code=SARVAM_LANGUAGE,
+                model=SARVAM_MODEL,
+                speaker=SARVAM_SPEAKER,
+                pace=use_pace,
+            )
+
+            # Save audio to temp file
+            save(response, tmp_path)
+
+            # Verify file is valid
+            if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > CACHE_MIN_FILE_SIZE:
+                self._play_with_lip_sync(tmp_path)
+
+                # Auto-cache short phrases
+                if len(text.strip()) <= AUTO_CACHE_MAX_LEN:
+                    _save_to_cache(text, tmp_path)
+
+                logger.info(f"[TTS] ✅ Sarvam AI spoke: '{text[:40]}...'")
+                return True
+            else:
+                logger.warning("[TTS] Sarvam AI returned empty/invalid audio.")
+                return False
+
+        except Exception as e:
+            logger.warning(f"[TTS] Sarvam AI failed: {e} — falling back to Edge-TTS")
+            return False
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _speak_edge_with_retry(self, text: str, voice: Optional[str] = None) -> bool:
         """Generate audio with edge-tts. Retry once on failure."""
@@ -439,204 +645,37 @@ class VoiceOutput:
                 time.sleep(1.0)
         return False
 
-    def _add_natural_pauses(self, text: str) -> str:
-        """Add natural speech pauses for more human-like TTS."""
-        text = text.replace(", ", "... ")
-        text = text.replace("! ", "!... ")
-        text = text.replace("? ", "?... ")
-        for word in [" toh ", " lekin ", " par ", " aur "]:
-            text = text.replace(word, f"...{word}")
-        return text
-
-    def _play_with_lip_sync(self, mp3_path: str) -> None:
-        """
-        Speak using ElevenLabs API (most emotional TTS).
-        Uses Aria voice — expressive young female.
-        Returns True if successful.
-        """
-        import requests as req
-
-        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
-        if not api_key:
-            # Try loading from .env
-            try:
-                from config import PROJECT_ROOT
-                env_file = PROJECT_ROOT / ".env"
-                if env_file.exists():
-                    for line in env_file.read_text().splitlines():
-                        if line.startswith("ELEVENLABS_API_KEY="):
-                            api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            break
-            except Exception:
-                pass
-
-        if not api_key:
-            return False
-
-        # Hindi female voice — expressive, emotional
-        # "Indian Hindi Voice" from ElevenLabs library
-        voice_id = "2F1KINpxsttim2WfMbVs"
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-
-        headers = {
-            "xi-api-key": api_key,
-            "Content-Type": "application/json",
+    def _clean_for_tts(self, text: str) -> str:
+        """Fix known Hinglish pronunciation issues for Sarvam AI / TTS."""
+        replacements = {
+            "bajke": "baj kar",
+            "bajker": "baj kar",
+            "bje": "baje",
+            "kya": "kyaa",
+            "hu": "hoon",
+            "ha": "haan",
+            "nhi": "nahi",
+            "mai": "main",
+            "rha": "raha",
+            "rhi": "rahi",
+            "kr": "kar",
+            "kyu": "kyun",
+            "0": "shunya", "1": "ek", "2": "do", "3": "teen", "4": "chaar",
+            "5": "paanch", "6": "chhah", "7": "saat", "8": "aath", "9": "nau"
         }
-
-        payload = {
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {
-                "stability": 0.3,        # Low = more expressive/dramatic
-                "similarity_boost": 0.75,
-                "style": 0.8,            # High = more emotional style
-                "use_speaker_boost": True,
-            }
-        }
-
-        tmp_path = tempfile.mktemp(suffix=".mp3")
-
-        try:
-            resp = req.post(url, headers=headers, json=payload, timeout=6)
-
-            if resp.status_code == 200:
-                with open(tmp_path, "wb") as f:
-                    f.write(resp.content)
-
-                if os.path.getsize(tmp_path) > 500:
-                    self._play_with_lip_sync(tmp_path)
-                    logger.info(f"[TTS] ElevenLabs reaction: '{text[:30]}...'")
-                    return True
-
-            elif resp.status_code == 401:
-                logger.warning("[TTS] ElevenLabs API key invalid.")
-            elif resp.status_code == 429:
-                logger.info("[TTS] ElevenLabs quota exceeded, using Edge-TTS.")
-            else:
-                logger.debug(f"[TTS] ElevenLabs HTTP {resp.status_code}")
-
-        except req.Timeout:
-            logger.debug("[TTS] ElevenLabs timeout.")
-        except Exception as e:
-            logger.debug(f"[TTS] ElevenLabs error: {e}")
-        finally:
-            try:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-            except OSError:
-                pass
-
-        return False
-
-    def _interrupt(self) -> None:
-        """Signal current speech to stop."""
-        if self.is_speaking:
-            self._interrupt_event.set()
-            self.is_speaking = False
-            # Give current thread a moment to notice
-            if self._current_thread and self._current_thread.is_alive():
-                self._current_thread.join(timeout=0.5)
-            self._interrupt_event.clear()
-            # Close mouth
-            if self._lip_sync_callback:
-                try:
-                    self._lip_sync_callback(0.0)
-                except Exception:
-                    pass
-
-    def _speak_thread(self, text: str, callback: Optional[Callable],
-                      voice: Optional[str] = None) -> None:
-        """Internal speak thread — cache → edge-tts (with retry) → pyttsx3."""
-        self.is_speaking = True
-        self._interrupt_event.clear()
-
-        try:
-            text = self._add_natural_pauses(text)
-
-            # STEP 1: Check cache (instant playback) — skip if custom voice
-            cached_path = _is_cached(text) if not voice else None
-            if cached_path:
-                self._play_with_lip_sync(str(cached_path))
-            elif self._edge_available:
-                # STEP 2: Edge-TTS with timeout + 1 retry
-                if not self._speak_edge_with_retry(text, voice):
-                    # STEP 3: Fallback to pyttsx3
-                    self._speak_pyttsx3(text)
-            else:
-                # No Edge-TTS available
-                self._speak_pyttsx3(text)
-
-        except Exception as e:
-            logger.error(f"TTS error: {e}")
-            try:
-                self._speak_pyttsx3(text)
-            except Exception:
-                pass
-        finally:
-            self.is_speaking = False
-            if self._lip_sync_callback:
-                try:
-                    self._lip_sync_callback(0.0)
-                except Exception:
-                    pass
-            if callback:
-                callback()
-
-    def _speak_edge_with_retry(self, text: str, voice: Optional[str] = None) -> bool:
-        """
-        Generate audio with edge-tts. Retry once on failure.
-        Hard timeout: EDGE_TTS_TIMEOUT seconds.
-        Returns True if successful, False if should fallback to pyttsx3.
-        """
-        import edge_tts
-
-        target_voice = voice or VOICE_PRIMARY
-        tmp_path = tempfile.mktemp(suffix=".mp3")
-
-        for attempt in range(2):  # Max 2 attempts
-            if self._interrupt_event.is_set():
-                return True  # Interrupted, don't fallback
-
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                try:
-                    use_voice = target_voice if attempt == 0 else VOICE_FALLBACK
-                    comm = edge_tts.Communicate(text, use_voice, rate=RATE)
-                    loop.run_until_complete(
-                        asyncio.wait_for(comm.save(tmp_path), timeout=EDGE_TTS_TIMEOUT)
-                    )
-                finally:
-                    loop.close()
-
-                # Verify file is valid
-                if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > CACHE_MIN_FILE_SIZE:
-                    # Play it
-                    self._play_with_lip_sync(tmp_path)
-
-                    # Auto-cache short phrases (default voice only)
-                    if not voice and len(text.strip()) <= AUTO_CACHE_MAX_LEN:
-                        _save_to_cache(text, tmp_path)
-
-                    return True
-
-            except asyncio.TimeoutError:
-                logger.warning(f"[TTS] Edge-TTS timeout (attempt {attempt+1})")
-            except Exception as e:
-                logger.warning(f"[TTS] Edge-TTS failed (attempt {attempt+1}): {e}")
-            finally:
-                try:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                except OSError:
-                    pass
-
-            # Only retry once with backoff (1s) — only on failure path
-            if attempt == 0:
-                time.sleep(1.0)
-
-        return False  # Both attempts failed
+        
+        # Simple word boundary replacement
+        words = text.split()
+        cleaned_words = []
+        for w in words:
+            # Handle punctuation attached to words
+            clean_w = w.lower().strip(".,!?\"'")
+            if clean_w in replacements:
+                # Replace but keep original casing/punctuation if possible (simplified here)
+                w = w.lower().replace(clean_w, replacements[clean_w])
+            cleaned_words.append(w)
+            
+        return " ".join(cleaned_words)
 
     def _add_natural_pauses(self, text: str) -> str:
         """Add natural speech pauses for more human-like TTS."""

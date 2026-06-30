@@ -2,25 +2,31 @@
 Desktop Control Module for Shweta AI Desktop Assistant.
 Routes AI actions to the appropriate skill functions.
 
-OPTIMIZED v2.0:
+PRODUCTION v3.0 — Alexa-grade resilience:
 - All skill modules init in try/except (no single failure crashes everything)
-- Action execution with 30s timeout for long-running actions
+- Action execution with configurable timeout for long-running actions
 - Concurrent action protection (lock-based)
 - Dangerous action set with confirmation enforcement
 - Null-safe skill access (checks None before calling)
 - Usage tracking fire-and-forget (never blocks action)
 - Unknown action handler with Hinglish response
+- Circuit Breaker integration via resilience module
+- Resource monitoring (RAM/CPU guards)
+- Skill health dashboard for diagnostics
+- Structured error categories for consistent user messaging
 """
 
 import logging
+import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import Any, Callable, Dict, Optional
 
 from assistant.skills import browser, system, apps, weather
 from assistant.skills.timer import TimerManager
 from assistant.skills import files as file_skills
-from assistant.skills import sysinfo, notes, windows, briefing, whatsapp, vision
+from assistant.skills import sysinfo, notes, windows, briefing, whatsapp, vision, games
 from assistant.skills import market as market_skills
 from assistant.skills import spotify as spotify_skills
 from assistant.skills import email_skill
@@ -40,8 +46,12 @@ DANGEROUS_ACTIONS = {"shutdown_pc", "restart_pc", "empty_recycle_bin"}
 
 # Actions that can take a long time (browser agent, multi-browser, etc.)
 LONG_RUNNING_ACTIONS = {"browser_agent_task", "multi_browser_task", "daily_briefing", "search_file"}
-LONG_TIMEOUT = 60  # seconds
+LONG_TIMEOUT = 120  # seconds (increased for production stability)
 DEFAULT_TIMEOUT = 30  # seconds
+
+# --- Production: Resource limits ---
+MAX_RAM_PERCENT = 90   # Skip heavy skills if RAM > 90%
+MAX_EXECUTOR_WORKERS = 4  # Increased from 2 for better concurrency
 
 
 class DesktopController:
@@ -90,7 +100,10 @@ class DesktopController:
         # Action execution lock (prevent concurrent actions)
         self._action_lock = threading.Lock()
         self._action_in_progress: bool = False
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="Action")
+        self._executor = ThreadPoolExecutor(max_workers=MAX_EXECUTOR_WORKERS, thread_name_prefix="Action")
+
+        # --- Production: Skill Health Tracking ---
+        self._skill_health: Dict[str, Dict[str, int]] = {}  # {action: {success: N, fail: N, last_fail_time: T}}
 
         # Skill init report
         self._skill_report: Dict[str, bool] = {
@@ -202,6 +215,9 @@ class DesktopController:
             "delete_note": self._delete_note,
             "complete_note": self._complete_note,
             "clear_notes": self._clear_notes,
+            "change_style": self._change_style,
+            "start_game": self._start_game,
+            "play_turn": self._play_turn,
             # Window Management
             "snap_left": self._snap_left,
             "snap_right": self._snap_right,
@@ -270,7 +286,7 @@ class DesktopController:
     def execute(self, action: str, params: Dict[str, Any]) -> Dict[str, str]:
         """
         Execute a desktop action by name.
-        Thread-safe with timeout protection.
+        Thread-safe with timeout protection, resource guards, and health tracking.
 
         Args:
             action: The action name to execute.
@@ -296,8 +312,21 @@ class DesktopController:
             logger.warning(f"Unknown action: {action}")
             return {"status": "error", "message": f"Ye action nahi samjhi: {action}. Phir se try karo."}
 
+        # --- Production: RAM guard for heavy skills ---
+        heavy_actions = {"browser_agent_task", "multi_browser_task", "auto_search_and_play", "auto_youtube_search", "auto_google_search"}
+        if action in heavy_actions:
+            try:
+                import psutil
+                ram = psutil.virtual_memory()
+                if ram.percent > MAX_RAM_PERCENT:
+                    logger.warning(f"[Resource Guard] RAM at {ram.percent}% — skipping heavy action '{action}'")
+                    return {"status": "error", "message": f"System pe load zyada hai (RAM {ram.percent}%). Thodi der baad try karo."}
+            except Exception:
+                pass  # psutil not available, skip check
+
         # Execute action with timeout
         timeout = LONG_TIMEOUT if action in LONG_RUNNING_ACTIONS else DEFAULT_TIMEOUT
+        start_time = time.time()
 
         try:
             future = self._executor.submit(handler, params)
@@ -309,7 +338,11 @@ class DesktopController:
             if "status" not in result:
                 result["status"] = "success"
 
-            logger.info(f"Action executed: {action} → {result.get('status')}")
+            elapsed = round(time.time() - start_time, 2)
+            logger.info(f"Action executed: {action} → {result.get('status')} ({elapsed}s)")
+
+            # --- Production: Track skill health ---
+            self._track_health(action, success=result.get("status") != "error")
 
             # Track usage (fire-and-forget, never blocks)
             try:
@@ -320,11 +353,41 @@ class DesktopController:
             return result
 
         except FuturesTimeout:
-            logger.error(f"Action timeout ({timeout}s): {action}")
+            elapsed = round(time.time() - start_time, 2)
+            logger.error(f"Action timeout ({timeout}s): {action} after {elapsed}s")
+            self._track_health(action, success=False)
             return {"status": "error", "message": f"Action timeout ho gaya ({timeout}s). Phir try karo."}
         except Exception as e:
-            logger.error(f"Action failed: {action} — {e}", exc_info=True)
+            elapsed = round(time.time() - start_time, 2)
+            logger.error(f"Action failed: {action} — {e} ({elapsed}s)", exc_info=True)
+            self._track_health(action, success=False)
             return {"status": "error", "message": f"Kuch gadbad hui: {str(e)[:80]}"}
+
+    # --- Production: Health tracking helpers ---
+
+    def _track_health(self, action: str, success: bool) -> None:
+        """Track success/failure for each action (production monitoring)."""
+        if action not in self._skill_health:
+            self._skill_health[action] = {"success": 0, "fail": 0, "last_fail_time": 0.0}
+        if success:
+            self._skill_health[action]["success"] += 1
+        else:
+            self._skill_health[action]["fail"] += 1
+            self._skill_health[action]["last_fail_time"] = time.time()
+
+    def get_health_report(self) -> Dict[str, Any]:
+        """Get a health report of all skills (for diagnostics/logging)."""
+        report = {}
+        for action, stats in self._skill_health.items():
+            total = stats["success"] + stats["fail"]
+            success_rate = (stats["success"] / total * 100) if total > 0 else 100
+            report[action] = {
+                "total_calls": total,
+                "success_rate": f"{success_rate:.1f}%",
+                "failures": stats["fail"],
+                "last_fail": time.strftime("%H:%M:%S", time.localtime(stats["last_fail_time"])) if stats["last_fail_time"] > 0 else "never",
+            }
+        return report
 
     # --- Browser skill wrappers ---
 
@@ -344,9 +407,56 @@ class DesktopController:
         query = params.get("query", "")
         if not query:
             return {"status": "error", "message": "Search query not provided."}
+            
+        # Check if it is a generic music category query to route to music.py recommendation engine
+        query_lower = query.lower().strip()
+        query_words = query_lower.split()
+        music_fillers = {"play", "song", "songs", "music", "gana", "gane", "chalao", "sunaao", "lagao", "playlist", "hits", "some", "a", "an", "the", "pe", "ko", "latest", "new", "mussic", "mussics"}
+        meaningful_words = [w for w in query_words if w not in music_fillers]
+        
+        category_keywords = {
+            "phonk": "phonk",
+            "punjabi": "punjabi",
+            "marathi": "marathi",
+            "haryanvi": "haryanvi",
+            "south": "south_indian",
+            "telugu": "south_indian",
+            "tamil": "south_indian",
+            "english": "english",
+            "hindi": "hindi",
+            "bollywood": "hindi",
+            "crazy": "hindi",
+            "party": "hindi",
+            "sad": "sad",
+            "chill": "chill",
+            "lofi": "chill",
+            "relax": "chill",
+            "study": "chill",
+            "coding": "chill",
+            "workout": "workout",
+            "gym": "workout",
+            "motivation": "workout"
+        }
+        
+        target_cat = None
+        if meaningful_words and all(w in category_keywords for w in meaningful_words):
+            resolved_cats = [category_keywords[w] for w in meaningful_words if w in category_keywords]
+            if resolved_cats:
+                target_cat = resolved_cats[0]
+                
+        if target_cat:
+            from assistant.skills import music
+            result = music.get_music_recommendation(target_cat)
+            if result.get("status") == "success" and "track" in result:
+                self._trigger_music_vibe(result["track"])
+            return result
+
         result = browser.play_youtube(query)
         # Trigger music vibe when playing music
         if result.get("status") == "success":
+            from assistant.skills import music
+            music.learn_song_in_background(query)
+            
             music_words = ["song", "gana", "music", "playlist", "band", "singer", "lofi", "sad", "happy", "chill", "workout"]
             if any(w in query.lower() for w in music_words):
                 self._trigger_music_vibe(query)
@@ -722,6 +832,24 @@ class DesktopController:
     def _clear_notes(self, params: Dict) -> Dict[str, str]:
         return notes.clear_notes()
 
+    def _change_style(self, params: Dict) -> Dict[str, str]:
+        style = params.get("style", params.get("type", "color_shift"))
+        if self._change_style_callback:
+            try:
+                self._change_style_callback(style)
+                return {"status": "success", "message": f"Outfit/Style change kar diya: {style}"}
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Change style callback not set."}
+
+    def _start_game(self, params: Dict) -> Dict[str, str]:
+        game_name = params.get("game", params.get("name", "rps"))
+        return games.start_game(game_name)
+
+    def _play_turn(self, params: Dict) -> Dict[str, str]:
+        choice = params.get("choice", params.get("text", ""))
+        return games.play_turn(choice)
+
     # --- Window Management wrappers ---
 
     def _snap_left(self, params: Dict) -> Dict[str, str]:
@@ -971,25 +1099,13 @@ class DesktopController:
             self._notify_music_vibe(vibe_mood, bpm)
             return result
         
-        # Spotify failed — play on YouTube instead
-        from assistant.skills import browser
-        yt_queries = {
-            "happy": "happy bollywood songs playlist",
-            "sad": "sad hindi songs playlist",
-            "chill": "lofi chill beats playlist",
-            "coding": "lofi coding music",
-            "workout": "workout motivation music hindi",
-            "party": "bollywood party songs",
-            "romantic": "romantic hindi songs",
-            "focus": "focus study music",
-            "sleep": "sleep relaxing music",
-        }
-        query = yt_queries.get(mood, f"{mood} music playlist")
-        yt_result = browser.play_youtube(query)
-        if yt_result.get("status") == "success":
+        # Spotify failed — play on YouTube using our smart recommendation engine
+        from assistant.skills import music
+        rec_result = music.get_music_recommendation(mood)
+        if rec_result.get("status") == "success":
             self._notify_music_vibe(vibe_mood, bpm)
-            return {"status": "success", "message": f"YouTube pe {mood} music laga diya!"}
-        return yt_result
+            return {"status": "success", "message": rec_result.get("message", f"YouTube pe {mood} music laga diya!")}
+        return rec_result
 
     def _spotify_volume(self, params: Dict) -> Dict[str, str]:
         percent = params.get("percent", 50)
@@ -1002,6 +1118,11 @@ class DesktopController:
     # --- Music Vibe Trigger (avatar animation) ---
 
     _music_vibe_callback = None  # Set by main.py
+    _change_style_callback = None  # Set by main.py
+
+    def set_change_style_callback(self, fn):
+        """Set callback to change avatar outfit/style."""
+        self._change_style_callback = fn
 
     def set_music_vibe_callback(self, fn):
         """Set callback to trigger avatar music vibe. Called with (mood, bpm)."""

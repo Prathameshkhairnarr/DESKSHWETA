@@ -330,7 +330,6 @@ class VoiceInput:
     def _google_stt(self, pcm_bytes: bytes) -> Optional[str]:
         """
         Send PCM audio to Google Speech-to-Text API.
-        Tries hi-IN first, falls back to en-IN.
         Hard timeout: 8 seconds per request.
 
         Args:
@@ -345,8 +344,8 @@ class VoiceInput:
             "config": {
                 "encoding": "LINEAR16",
                 "sampleRateHertz": SAMPLE_RATE,
-                "languageCode": "hi-IN",
-                "alternativeLanguageCodes": ["en-IN"],
+                "languageCode": "en-IN",
+                "alternativeLanguageCodes": ["hi-IN"],
                 "enableAutomaticPunctuation": False,
             },
             "audio": {
@@ -356,7 +355,6 @@ class VoiceInput:
 
         url = f"{GOOGLE_STT_URL}?key={GOOGLE_STT_KEY}"
 
-        # Attempt 1: hi-IN with en-IN alternative
         try:
             resp = requests.post(url, json=body, timeout=STT_TIMEOUT)
 
@@ -378,7 +376,7 @@ class VoiceInput:
 
         except requests.Timeout:
             self.last_error = ERROR_MESSAGES["stt_timeout"]
-            logger.error("Google STT timeout (hi-IN).")
+            logger.error("Google STT timeout.")
             return None
         except requests.ConnectionError:
             self.last_error = ERROR_MESSAGES["stt_timeout"]
@@ -386,27 +384,8 @@ class VoiceInput:
             return None
         except Exception as e:
             self.last_error = ERROR_MESSAGES["stt_api_error"]
-            logger.error(f"STT error (hi-IN): {e}")
+            logger.error(f"STT error: {e}")
             return None
-
-        # Attempt 2: en-IN only (fallback)
-        try:
-            body["config"]["languageCode"] = "en-IN"
-            body["config"].pop("alternativeLanguageCodes", None)
-
-            resp2 = requests.post(url, json=body, timeout=STT_TIMEOUT)
-
-            if resp2.status_code == 200:
-                text = self._extract_transcript(resp2.json())
-                if text:
-                    logger.info(f"Recognized (en): {text}")
-                    return text
-
-        except requests.Timeout:
-            self.last_error = ERROR_MESSAGES["stt_timeout"]
-            logger.error("Google STT timeout (en-IN fallback).")
-        except Exception as e:
-            logger.error(f"STT error (en-IN): {e}")
 
         logger.info("Could not understand audio.")
         return None

@@ -78,6 +78,7 @@ KNOWN_ACTIONS = {
     "auto_search_and_play", "auto_youtube_search", "auto_play_first",
     "auto_google_search", "auto_open_url", "auto_click", "auto_type",
     "auto_scroll_down", "auto_scroll_up", "auto_go_back", "auto_close_browser",
+    "change_style", "start_game", "play_turn",
 }
 
 

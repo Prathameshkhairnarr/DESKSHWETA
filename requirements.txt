@@ -10,3 +10,5 @@ pyperclip
 keyboard
 pillow
 pyttsx3
+vosk
+schedule

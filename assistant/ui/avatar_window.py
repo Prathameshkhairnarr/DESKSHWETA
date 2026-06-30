@@ -94,6 +94,7 @@ class AvatarWindow(QMainWindow):
             Qt.WindowStaysOnTopHint |
             Qt.Tool
         )
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
         # Position bottom-right
         screen = QApplication.primaryScreen().geometry()
@@ -102,49 +103,21 @@ class AvatarWindow(QMainWindow):
         # Central widget
         central = QWidget(self)
         self.setCentralWidget(central)
-        central.setStyleSheet("background: #0a0f1a;")
+        central.setStyleSheet("background: transparent;")
 
-        # --- Drag bar at top (30px) ---
-        self.drag_bar = QLabel("⠿ Shweta", central)
-        self.drag_bar.setGeometry(0, 0, self.width(), 30)
-        self.drag_bar.setStyleSheet(
-            "background: #0d1220; color: #00d4ff; font-size: 11px; "
-            "padding-left: 10px; letter-spacing: 2px;"
-        )
-        self.drag_bar.setAlignment(Qt.AlignVCenter)
-
-        # Close button
-        self._close_btn = QLabel("✕", central)
-        self._close_btn.setGeometry(370, 5, 25, 20)
-        self._close_btn.setStyleSheet(
-            "color: #4a5070; font-size: 14px; background: transparent;"
-        )
-        self._close_btn.setAlignment(Qt.AlignCenter)
-        self._close_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._close_btn.mousePressEvent = lambda e: self._close()
-
-        # Minimize button (tray)
-        self._min_btn = QLabel("—", central)
-        self._min_btn.setGeometry(345, 5, 25, 20)
-        self._min_btn.setStyleSheet(
-            "color: #4a5070; font-size: 14px; background: transparent;"
-        )
-        self._min_btn.setAlignment(Qt.AlignCenter)
-        self._min_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._min_btn.mousePressEvent = lambda e: self._tray_hide()
-
-        # --- WebEngine view (avatar area: full window minus 30px top drag bar) ---
+        # --- WebEngine view ---
         self.web = QWebEngineView(central)
+        self.web.setAttribute(Qt.WA_TranslucentBackground)
         self.web.setPage(CustomWebEnginePage(self.web))
-        self.web.setGeometry(0, 30, self.width(), self.height() - 30)
+        self.web.setGeometry(0, 0, self.width(), self.height())
 
         # Enable WebGL
         settings = self.web.settings()
         settings.setAttribute(QWebEngineSettings.WebGLEnabled, True)
         settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
 
-        # Background
-        self.web.page().setBackgroundColor(QColor(10, 15, 26))
+        # Background transparent
+        self.web.page().setBackgroundColor(Qt.transparent)
 
         # Watch title changes for drag signals from JS
         self.web.page().titleChanged.connect(self._on_title_change)
@@ -296,6 +269,10 @@ class AvatarWindow(QMainWindow):
     def set_emotion(self, emotion: str, intensity: float = 0.8) -> None:
         """Set avatar emotion: happy, angry, sad, surprised, relaxed, neutral."""
         self._run_js(f"if(window.setEmotion) window.setEmotion('{emotion}', {intensity:.2f})")
+
+    def change_style(self, style_type: str) -> None:
+        """Change avatar style/outfit: glasses, hair_accessory, jacket, color_shift."""
+        self._run_js(f"if(window.changeStyle) window.changeStyle('{style_type}')")
 
     def show_chat_bubble(self, text: str, duration: float = 5.0) -> None:
         """Show translucent chat bubble with text. Auto-fades after duration seconds."""
@@ -557,18 +534,12 @@ class AvatarWindow(QMainWindow):
         self._dragging = False
 
     def resizeEvent(self, event):
-        """Keep web view and drag bar filling window on resize."""
+        """Keep web view filling window on resize."""
         super().resizeEvent(event)
         w = self.width()
         h = self.height()
-        if hasattr(self, 'drag_bar'):
-            self.drag_bar.setGeometry(0, 0, w, 30)
-        if hasattr(self, '_close_btn'):
-            self._close_btn.setGeometry(w - 30, 5, 25, 20)
-        if hasattr(self, '_min_btn'):
-            self._min_btn.setGeometry(w - 55, 5, 25, 20)
         if hasattr(self, 'web'):
-            self.web.setGeometry(0, 30, w, h - 30)
+            self.web.setGeometry(0, 0, w, h)
         if hasattr(self, 'sizegrip'):
             self.sizegrip.setGeometry(w - 20, h - 20, 20, 20)
             self.sizegrip.raise_()
