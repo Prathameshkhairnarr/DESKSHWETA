@@ -13,11 +13,37 @@ from typing import Dict
 
 logger = logging.getLogger(__name__)
 
-# Common user directories
+import winreg
+
+def _get_windows_folder(folder_name: str, fallback_path: Path) -> Path:
+    """Helper to safely query Windows registry for user shell folders."""
+    if platform.system() != "Windows":
+        return fallback_path
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            path, _ = winreg.QueryValueEx(key, folder_name)
+            # Expand environment variables like %USERPROFILE%
+            expanded = os.path.expandvars(path)
+            return Path(expanded).resolve()
+    except Exception as e:
+        logger.warning(f"Could not read registry for {folder_name}: {e}")
+        return fallback_path
+
 HOME = Path.home().resolve()
-DESKTOP = (HOME / "Desktop").resolve()
-DOCUMENTS = (HOME / "Documents").resolve()
-DOWNLOADS = (HOME / "Downloads").resolve()
+DESKTOP = _get_windows_folder("Desktop", HOME / "Desktop")
+DOCUMENTS = _get_windows_folder("Personal", HOME / "Documents")
+# Downloads doesn't have a standard named value in all Windows versions, its GUID is {374DE290-123F-4565-9164-39C4925E467B}
+def _get_downloads():
+    if platform.system() != "Windows":
+        return HOME / "Downloads"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            path, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+            return Path(os.path.expandvars(path)).resolve()
+    except:
+        return HOME / "Downloads"
+
+DOWNLOADS = _get_downloads()
 
 
 def _is_safe_path(path: Path) -> bool:
@@ -55,7 +81,7 @@ def _resolve_path(filepath: str) -> Path:
 
 def create_file(filename: str, content: str = "") -> Dict[str, str]:
     """
-    Create a new file.
+    Create a new file with format support (.txt, .pdf, .docx, .md).
 
     Args:
         filename: Name/path of file to create.
@@ -65,8 +91,33 @@ def create_file(filename: str, content: str = "") -> Dict[str, str]:
         filepath = DESKTOP / filename if not Path(filename).is_absolute() else Path(filename)
         if not _is_safe_path(filepath):
             return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
+        
         filepath.parent.mkdir(parents=True, exist_ok=True)
-        filepath.write_text(content, encoding="utf-8")
+        ext = filepath.suffix.lower()
+
+        if ext == ".pdf":
+            try:
+                from fpdf import FPDF
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("helvetica", size=12)
+                # Handle unicode by encoding and decoding, or replacing
+                safe_content = content.encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 10, text=safe_content)
+                pdf.output(str(filepath))
+            except ImportError:
+                return {"status": "error", "message": "PDF library missing (fpdf2)."}
+        elif ext == ".docx":
+            try:
+                from docx import Document
+                doc = Document()
+                doc.add_paragraph(content)
+                doc.save(str(filepath))
+            except ImportError:
+                return {"status": "error", "message": "Word library missing (python-docx)."}
+        else:
+            filepath.write_text(content, encoding="utf-8")
+            
         logger.info(f"Created file: {filepath}")
         return {"status": "success", "message": f"File bana diya: {filepath.name}"}
     except Exception as e:

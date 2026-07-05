@@ -19,8 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 
 logger = logging.getLogger(__name__)
 
-# Brave browser path
-BRAVE_PATH = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+from config import BROWSER_PATH, BROWSER_USER_DATA
 
 
 class BrowserAutomation:
@@ -44,10 +43,9 @@ class BrowserAutomation:
 
         try:
             options = Options()
-            options.binary_location = BRAVE_PATH
-            # Use existing Brave profile (keeps all logins, cookies, extensions)
-            import os
-            user_data = os.path.join(os.environ["LOCALAPPDATA"], "BraveSoftware", "Brave-Browser", "User Data")
+            options.binary_location = BROWSER_PATH
+            # Use existing profile (keeps all logins, cookies, extensions)
+            user_data = BROWSER_USER_DATA
             options.add_argument(f"--user-data-dir={user_data}")
             options.add_argument("--profile-directory=Default")
             # Keep browser open, don't run headless (user sees everything)
@@ -60,7 +58,7 @@ class BrowserAutomation:
             # Selenium 4 auto-downloads chromedriver
             self.driver = webdriver.Chrome(options=options)
             self._is_ready = True
-            logger.info("Brave browser launched with Selenium.")
+            logger.info("Browser launched with Selenium.")
             return True
 
         except Exception as e:

@@ -155,6 +155,9 @@ class DesktopController:
             "volume_up": self._volume_up,
             "volume_down": self._volume_down,
             "volume_mute": self._volume_mute,
+            "brightness_up": self._brightness_up,
+            "brightness_down": self._brightness_down,
+            "set_brightness": self._set_brightness,
             "lock_screen": self._lock_screen,
             "open_file_manager": self._open_file_manager,
             "type_text": self._type_text,
@@ -235,6 +238,7 @@ class DesktopController:
             "send_whatsapp_by_name": self._send_whatsapp_by_name,
             # Vision AI
             "read_screen": self._read_screen,
+            "react_to_screen": self._read_screen,
             # Gesture Control
             "start_gesture": self._start_gesture,
             "stop_gesture": self._stop_gesture,
@@ -489,6 +493,27 @@ class DesktopController:
 
     def _volume_mute(self, params: Dict) -> Dict[str, str]:
         return system.volume_mute()
+
+    def _brightness_up(self, params: Dict) -> Dict[str, str]:
+        try:
+            steps = int(params.get("steps", 15))
+        except (ValueError, TypeError):
+            steps = 15
+        return system.brightness_up(min(steps, 50))
+
+    def _brightness_down(self, params: Dict) -> Dict[str, str]:
+        try:
+            steps = int(params.get("steps", 15))
+        except (ValueError, TypeError):
+            steps = 15
+        return system.brightness_down(min(steps, 50))
+
+    def _set_brightness(self, params: Dict) -> Dict[str, str]:
+        try:
+            level = int(params.get("level", 50))
+        except (ValueError, TypeError):
+            level = 50
+        return system.set_brightness(level)
 
     def _lock_screen(self, params: Dict) -> Dict[str, str]:
         return system.lock_screen()
@@ -930,8 +955,12 @@ class DesktopController:
     # --- Vision AI ---
 
     def _read_screen(self, params: Dict) -> Dict[str, str]:
-        question = params.get("question", "Screen pe kya dikh raha hai?")
-        return vision.read_screen(question)
+        question = params.get("query") or params.get("question") or "Screen pe kya dikh raha hai?"
+        try:
+            from assistant.skills import vision
+            return vision.read_screen(question)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     # --- Gesture Control ---
 

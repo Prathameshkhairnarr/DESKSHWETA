@@ -91,9 +91,9 @@ def open_tradingview(symbol: str = "") -> Dict[str, str]:
         else:
             url = "https://www.tradingview.com/chart/"
 
-        BRAVE_PATH = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+        from config import BROWSER_PATH
         try:
-            subprocess.Popen([BRAVE_PATH, url])
+            subprocess.Popen([BROWSER_PATH, url])
         except Exception:
             webbrowser.open(url)
 

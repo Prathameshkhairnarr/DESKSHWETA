@@ -287,11 +287,11 @@ class VoiceOutput:
             except Exception as e:
                 logger.warning(f"[TTS] Polly init failed: {e}")
 
-        # --- Edge TTS (FALLBACK — free, neural voices) ---
+        # --- Edge TTS (FALLBACK - free, neural voices) ---
         try:
             import edge_tts
-            self._edge_available = True
-            logger.info("[TTS] Edge-TTS initialized — fallback neural voice ready.")
+            self._edge_available = False  # TEMPORARILY DISABLED
+            logger.info("[TTS] Edge-TTS initialized but temporarily disabled.")
         except ImportError:
             logger.warning("[TTS] edge_tts not installed. Using pyttsx3 only.")
 

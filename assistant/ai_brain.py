@@ -701,7 +701,7 @@ class AIBrain:
             dynamic_prompt = self._build_dynamic_prompt(lang_instruction)
 
             gemini_history = []
-            for msg in self.conversation_history:
+            for msg in self.conversation_history[-4:]:
                 role = "user" if msg["role"] == "user" else "model"
                 gemini_history.append({
                     "role": role,
@@ -714,7 +714,7 @@ class AIBrain:
                 config=types.GenerateContentConfig(
                     system_instruction=dynamic_prompt,
                     temperature=0.7,
-                    max_output_tokens=1024,
+                    max_output_tokens=300,
                 )
             )
 
@@ -759,7 +759,7 @@ class AIBrain:
                 "https://models.inference.ai.azure.com/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=30,
+                timeout=15,
             )
 
             if response.status_code == 200:

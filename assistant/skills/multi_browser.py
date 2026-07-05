@@ -18,23 +18,23 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from config import GEMINI_API_KEY, GROQ_API_KEY, GITHUB_TOKEN, PROJECT_ROOT
+from config import GEMINI_API_KEY, GROQ_API_KEY, GITHUB_TOKEN, PROJECT_ROOT, BROWSER_PATH, BROWSER_USER_DATA
 
 logger = logging.getLogger(__name__)
 
-# Brave browser paths
-BRAVE_PATH = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
-BRAVE_PROFILE = os.path.join(os.environ.get("LOCALAPPDATA", ""), "BraveSoftware", "Brave-Browser", "User Data")
+# Browser paths mapped from config
+BRAVE_PATH = BROWSER_PATH
+BRAVE_PROFILE = BROWSER_USER_DATA
 
 
 class MultiBrowserAgent:
-    """Opens multiple browser tabs fast using Brave with user's logged-in profile."""
+    """Opens multiple browser tabs fast using browser with user's logged-in profile."""
 
     def __init__(self) -> None:
         self.is_running: bool = False
-        # Verify Brave exists
+        # Verify browser exists
         if not Path(BRAVE_PATH).exists():
-            logger.warning(f"Brave not found at {BRAVE_PATH}")
+            logger.warning(f"Browser not found at {BRAVE_PATH}")
 
     def execute(self, goal: str) -> Dict[str, Any]:
         """Execute multi-tab browser task — FAST mode."""

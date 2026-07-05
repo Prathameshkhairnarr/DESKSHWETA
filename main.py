@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import ASSISTANT_NAME, LOG_LEVEL, LOGS_DIR
 from assistant.voice_input import VoiceInput
 from assistant.voice_output import VoiceOutput
-from assistant.ai_brain import AIBrain
+from assistant.brain_tool import ToolBrain
 from assistant.desktop_control import DesktopController
 from assistant.channels.telegram_bot import ShwetaTelegramBot
 from assistant.activation import setup_activation
@@ -58,7 +58,7 @@ class ShwetaAssistant:
         # Initialize components
         self.voice_input = VoiceInput()
         self.voice_output = VoiceOutput()
-        self.ai_brain = AIBrain()
+        self.ai_brain = ToolBrain()
         self.desktop_control = DesktopController(
             on_timer_complete=self._on_timer_complete
         )
@@ -406,17 +406,25 @@ class ShwetaAssistant:
                         "get_battery", "get_ram_usage", "get_storage",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
                         "get_date", "list_files", "search_file", "list_notes", "daily_briefing",
-                        "morning_briefing", "browser_agent_task"]
+                        "morning_briefing", "browser_agent_task", "react_to_screen"]
         if action in info_actions and action_message:
             clean_msg = action_message.replace("📈", "").replace("📉", "").replace("🥇", "").replace("🥈", "").replace("🔋", "").replace("💾", "").replace("🖥️", "").replace("💿", "").replace("📝", "").replace("🕐", "").replace("🌤", "").strip()
-            # Browser agent needs more chars for product recommendations
-            max_len = 300 if action == "browser_agent_task" else 150
+            # Browser agent and Screen Reactions need more chars
+            max_len = 500 if action in ["browser_agent_task", "react_to_screen"] else 150
             if len(clean_msg) > max_len:
                 clean_msg = clean_msg[:max_len]
             reply = clean_msg
 
         # Speak the reply (once only)
         if reply:
+            if action == "react_to_screen":
+                import random
+                # Add a physical reaction for screen content
+                anims = ["look_around", "head_tilt_left", "head_tilt_right", "nod"]
+                emotions = ["happy", "curious", "surprised"]
+                self.ui.schedule(self.ui.trigger_idle_animation, random.choice(anims))
+                self.ui.schedule(self.ui.set_emotion, random.choice(emotions), 0.7)
+
             self.ui.schedule(self.ui.set_text, f"💬 {reply}")
             self.ui.schedule(self.ui.show_chat_bubble, reply, 6.0)
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
@@ -439,40 +447,84 @@ class ShwetaAssistant:
         """Initialize the background checker for idle state."""
         from PyQt5.QtCore import QTimer
         self._idle_timer = QTimer(self.ui)
-        self._idle_timer.setInterval(10000)  # Check every 10 seconds
+        self._idle_timer.setInterval(5000)  # Check every 5 seconds for responsive micro-expressions
         self._idle_timer.timeout.connect(self._check_idle_activity)
         self._idle_timer.start()
+        self._idle_tier = 0
 
     def _check_idle_activity(self) -> None:
-        """Check if user has been inactive for too long and trigger idle behavior."""
+        """Check if user has been inactive for too long and trigger tiered idle behavior."""
         import time
         # If Shweta is actively processing, listening, speaking, or if music is active, reset activity timer
         if self._is_processing or self._is_listening or self.voice_output.is_speaking or self._is_music_active:
             self._last_activity_time = time.time()
+            self._idle_tier = 0
             return
 
         idle_duration = time.time() - self._last_activity_time
-        # Idle behavior threshold: 45 seconds
-        if idle_duration >= 45:
-            self._trigger_idle_behavior()
 
-    def _trigger_idle_behavior(self) -> None:
-        """Trigger a cute idle behavior (animation, text bubble, and spoken phrase) to show Shweta is alive."""
+        # Tier 3: > 2 minutes (Major interaction attempt)
+        if idle_duration >= 120 and self._idle_tier < 3:
+            self._idle_tier = 3
+            self._trigger_idle_speech(tier=3)
+        # Tier 2: > 60 seconds (Short spoken phrase)
+        elif idle_duration >= 60 and self._idle_tier < 2:
+            self._idle_tier = 2
+            self._trigger_idle_speech(tier=2)
+        # Tier 1: > 30 seconds (Micro-expressions only)
+        elif idle_duration >= 30 and self._idle_tier < 1:
+            self._idle_tier = 1
+            self._trigger_micro_expression()
+        # Ambient: Every ~15s after 10s idle, do a subtle animation
+        elif idle_duration >= 10 and int(idle_duration) % 15 < 5:
+            import random
+            if random.random() < 0.3:  # 30% chance to trigger to keep it natural
+                self._trigger_ambient_animation()
+
+    def _trigger_ambient_animation(self) -> None:
+        """Trigger subtle ambient animations like looking around or sighing."""
+        import random
+        anims = ['look_around', 'head_tilt_left', 'head_tilt_right', 'sigh', 'stretch']
+        anim = random.choice(anims)
+        self.ui.schedule(lambda: self.ui.trigger_idle_animation(anim))
+
+    def _trigger_micro_expression(self) -> None:
+        """Trigger a facial micro-expression without speaking."""
+        import random
+        exprs = [
+            ('curious', 0.4, 3.0),
+            ('slight_smile', 0.5, 4.0),
+            ('sleepy', 0.6, 2.5),
+            ('think', 0.5, 3.5),
+            ('eyebrow_raise', 0.6, 2.0)
+        ]
+        expr, intensity, duration = random.choice(exprs)
+        self.ui.schedule(lambda: self.ui.trigger_micro_expression(expr, intensity, duration))
+
+    def _trigger_idle_speech(self, tier: int = 2) -> None:
+        """Trigger spoken idle behaviors based on tier."""
         if self._is_processing or self._is_listening or self.voice_output.is_speaking or self._is_music_active:
             return
             
         import random
-        import time
-        # Reset last activity time so we don't spam behaviors
-        self._last_activity_time = time.time()
         
-        behaviors = [
-            {"phrase": "Arey yaar, tum toh kuch bol hi nahi rahe ho. Main bore ho rahi hoon!", "emotion": "sad", "animation": "down"},
-            {"phrase": "Oye! So gaye kya? Chalo jaldi se kuch kaam batao!", "emotion": "happy", "animation": "left"},
-            {"phrase": "Hmm, bohot sannata hai yahan. Kuch interesting baat karo na.", "emotion": "relaxed", "animation": "right"},
-            {"phrase": "Acha suno, agar free ho toh chalo rock-paper-scissors khelte hain!", "emotion": "happy", "animation": "up"},
-            {"phrase": "Batao na re, kya chal raha hai? Main kab se baithi hoon aise hi.", "emotion": "relaxed", "animation": "left"}
-        ]
+        if tier == 2:
+            behaviors = [
+                {"phrase": "Arey yaar, kitna sannata hai...", "emotion": "sad", "animation": "sigh"},
+                {"phrase": "Hmm, main yahin hoon agar kuch kaam ho toh.", "emotion": "relaxed", "animation": "slight_smile"},
+                {"phrase": "Bore ho rahi hoon main...", "emotion": "sad", "animation": "pout"},
+                {"phrase": "Aise hi baithi rahungi kya main?", "emotion": "surprised", "animation": "curious"},
+                {"phrase": "Chai peene ka time ho gaya kya?", "emotion": "happy", "animation": "think"}
+            ]
+        else: # tier 3
+            behaviors = [
+                {"phrase": "Oye! So gaye kya? Chalo jaldi se kuch kaam batao!", "emotion": "happy", "animation": "curious"},
+                {"phrase": "Acha suno, agar free ho toh chalo rock-paper-scissors khelte hain!", "emotion": "happy", "animation": "eyebrow_raise"},
+                {"phrase": "Helloooo! Koi hai wahan? Main akeli bore ho rahi hoon yahan.", "emotion": "sad", "animation": "look_around"},
+                {"phrase": "Dekho, agar kaam nahi hai toh main thodi der so jaun?", "emotion": "relaxed", "animation": "sleepy"},
+                {"phrase": "Kaam khatam ho gaya kya tumhara? Music play karun thoda?", "emotion": "happy", "animation": "slight_smile"}
+            ]
+            
         b = random.choice(behaviors)
         
         self._is_idle_talking = True
@@ -481,13 +533,14 @@ class ShwetaAssistant:
         self.ui.schedule(self.ui.set_text, f"💬 {b['phrase']}")
         self.ui.schedule(self.ui.show_chat_bubble, b["phrase"], 6.0)
         
-        # Trigger head turn animation
-        js_code = f"if(window.setReactionAnimation) window.setReactionAnimation('{b['animation']}')"
-        self.ui.schedule(lambda: self.ui._run_js(js_code))
+        # Trigger micro-expression for the speech
+        if b['animation'] in ['curious', 'slight_smile', 'pout', 'sleepy', 'think', 'eyebrow_raise']:
+            self.ui.schedule(lambda: self.ui.trigger_micro_expression(b['animation'], 0.6, 3.0))
+        else:
+            self.ui.schedule(lambda: self.ui.trigger_idle_animation(b['animation']))
         
         # Speak the phrase aloud
         current_voice = self.desktop_control.language.get_voice()
-        self._is_processing = True # Mark as processing to block other idle checks
         self.voice_output.speak(b["phrase"], voice=current_voice, callback=self._on_speaking_done)
 
     def _handle_special_commands(self, text: str) -> bool:
@@ -646,16 +699,41 @@ class ShwetaAssistant:
         """Start wake word detection in separate process (no mic conflict)."""
         try:
             from assistant.skills.wakeword import WakeWordManager
+            import winsound
+            import threading
 
             def on_wake():
-                # Trigger listen flow (same as mic button click)
-                self._on_mic_click()
+                # Visual feedback
+                self.ui.schedule(self.ui.set_emotion, "happy", 0.6)
+                self.ui.schedule(self.ui.show_chat_bubble, "Haan bolo!", 3.0)
+                # Audio feedback (system ding) - non-blocking
+                try:
+                    winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+                except Exception:
+                    pass
+                # Trigger listen flow
+                self.ui.schedule(self._on_mic_click)
 
             self._wake_manager = WakeWordManager(
                 on_wake_callback=on_wake,
                 sensitivity=0.5
             )
             self._wake_manager.start()
+
+            # Process health monitor (auto-restart if crashed)
+            def _wake_health_monitor():
+                import time
+                while getattr(self, '_wake_manager', None):
+                    if not self._wake_manager.is_running():
+                        logger.warning("WakeWord process died! Auto-restarting...")
+                        try:
+                            self._wake_manager.start()
+                        except Exception as e:
+                            logger.error(f"Failed to restart WakeWord: {e}")
+                    time.sleep(10)
+
+            threading.Thread(target=_wake_health_monitor, daemon=True, name="WakeMonitor").start()
+
         except Exception as e:
             logger.warning(f"Wake word not available: {e}")
 

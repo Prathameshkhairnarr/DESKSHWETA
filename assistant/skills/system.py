@@ -344,3 +344,37 @@ def sleep_pc() -> Dict[str, str]:
         return {"status": "success", "message": "PC sleep mode mein ja raha hai."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def set_brightness(level: int) -> Dict[str, str]:
+    """Set screen brightness to a specific level (0-100)."""
+    try:
+        import screen_brightness_control as sbc
+        level = max(0, min(100, int(level)))
+        sbc.set_brightness(level)
+        return {"status": "success", "message": f"Brightness {level}% kar di."}
+    except Exception as e:
+        logger.error(f"Brightness error: {e}")
+        return {"status": "error", "message": "Brightness control nahi ho pa rahi."}
+
+
+def brightness_up(steps: int = 15) -> Dict[str, str]:
+    """Increase screen brightness."""
+    try:
+        import screen_brightness_control as sbc
+        current = sbc.get_brightness()[0]
+        return set_brightness(current + steps)
+    except Exception as e:
+        logger.error(f"Brightness up error: {e}")
+        return {"status": "error", "message": "Brightness increase nahi ho pa rahi."}
+
+
+def brightness_down(steps: int = 15) -> Dict[str, str]:
+    """Decrease screen brightness."""
+    try:
+        import screen_brightness_control as sbc
+        current = sbc.get_brightness()[0]
+        return set_brightness(current - steps)
+    except Exception as e:
+        logger.error(f"Brightness down error: {e}")
+        return {"status": "error", "message": "Brightness decrease nahi ho pa rahi."}

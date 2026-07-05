@@ -19,11 +19,25 @@ GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 GOOGLE_APPLICATION_CREDENTIALS: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 
+# AWS Keys
+AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
+
 # Assistant Settings
 ASSISTANT_NAME: str = os.getenv("ASSISTANT_NAME", "Shweta")
 DEFAULT_LANGUAGE: str = os.getenv("DEFAULT_LANGUAGE", "hi-IN")
 DEFAULT_CITY: str = os.getenv("DEFAULT_CITY", "Pune")
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+# Browser Settings
+BROWSER_TYPE: str = os.getenv("BROWSER_TYPE", "chrome").lower()
+if BROWSER_TYPE == "brave":
+    BROWSER_PATH: str = os.getenv("BROWSER_PATH", r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe")
+    BROWSER_USER_DATA: str = os.path.join(os.environ.get("LOCALAPPDATA", ""), "BraveSoftware", "Brave-Browser", "User Data")
+else:
+    BROWSER_PATH: str = os.getenv("BROWSER_PATH", r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    BROWSER_USER_DATA: str = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data")
 
 # Gemini AI Settings
 GEMINI_MODEL: str = "gemini-2.0-flash-lite"
@@ -102,6 +116,8 @@ RULES:
 - WhatsApp: contact names ALWAYS in English/Roman script (e.g. "Prasad Hire" NOT "प्रसाद"). Message text also in Roman script. NEVER use Devanagari for WhatsApp names/messages.
 - For sad user: use spotify_mood{{mood:"chill"}} or comfort with words.
 - ACTION FORMAT CRITICAL: "action" field = ONLY action name. Params go in "params" object SEPARATELY. WRONG: {{"action":"create_folder{{foldername:\\"test\\"}}"}} CORRECT: {{"action":"create_folder","params":{{"foldername":"test"}}}}
+- FILE CREATION EXAMPLE: "ek file bana do notes.txt" → {{"action":"create_file","params":{{"filename":"notes.txt","content":""}},"reply":"haan bana rahi hoon","emotion":"happy"}}. "folder bana test" → {{"action":"create_folder","params":{{"foldername":"test"}},"reply":"ban gaya","emotion":"happy"}}
+- SCREEN REACTION: If user asks "is par react karo", "what am I watching", "look at my screen", use react_to_screen. Example: "yeh reel kaisi lagi?" → {{"action":"react_to_screen","params":{{"question":"what is happening in this reel and what is your reaction to it?"}},"reply":"dekhti hoon ek second...","emotion":"curious"}}
 - RESEARCH/SHOPPING/COMPARISON: For any query needing web search (product recommendations, price comparison, finding info online), use browser_agent_task. Example: "2000 ke andar headphone bata" → {{"action":"browser_agent_task","params":{{"goal":"search best headphones under 2000 rupees on Amazon India, list top 5 with names and prices"}},"reply":"ruk dhundh rahi hoon..."}}
 - browser_agent_task for: product search, price comparison, research, online info lookup, reviews, recommendations.
 - MULTI-TAB COMMANDS: When user wants MULTIPLE things on browser simultaneously (multiple tabs/sites), use multi_browser_task. Example: "YouTube kholo aur TradingView pe NVDA chart kholo aur Prime Video pe The Boys play karo" → {{"action":"multi_browser_task","params":{{"goal":"open YouTube, open TradingView with NVDA chart, open Prime Video and play The Boys season 4 episode 4"}},"reply":"ruk sab tabs khol rahi hoon..."}}

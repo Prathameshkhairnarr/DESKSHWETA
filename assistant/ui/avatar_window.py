@@ -274,6 +274,14 @@ class AvatarWindow(QMainWindow):
         """Change avatar style/outfit: glasses, hair_accessory, jacket, color_shift."""
         self._run_js(f"if(window.changeStyle) window.changeStyle('{style_type}')")
 
+    def trigger_micro_expression(self, expr_type: str, intensity: float = 0.3, duration: float = 2.0) -> None:
+        """Trigger subtle facial micro-expression: eyebrow_raise, slight_smile, curious, pout, sleepy, think."""
+        self._run_js(f"if(window.setMicroExpression) window.setMicroExpression('{expr_type}', {intensity:.2f}, {duration:.1f})")
+
+    def trigger_idle_animation(self, anim_type: str) -> None:
+        """Trigger autonomous idle animation: head_tilt_left, head_tilt_right, look_around, nod, sigh, stretch."""
+        self._run_js(f"if(window.triggerIdleAnimation) window.triggerIdleAnimation('{anim_type}')")
+
     def show_chat_bubble(self, text: str, duration: float = 5.0) -> None:
         """Show translucent chat bubble with text. Auto-fades after duration seconds."""
         escaped = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")

@@ -4,6 +4,7 @@ Handles opening and closing desktop applications.
 """
 
 import logging
+import os
 import platform
 import subprocess
 from typing import Dict
@@ -221,7 +222,10 @@ def open_app(app_name: str) -> Dict[str, str]:
 
         if OS_NAME == "Windows":
             if command:
-                os.startfile(command) if ":" in command else subprocess.Popen(command, shell=True)
+                try:
+                    os.startfile(command)
+                except Exception:
+                    subprocess.Popen(command, shell=True)
             else:
                 subprocess.Popen(f'start "" "{app_name}"', shell=True)
 

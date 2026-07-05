@@ -14,15 +14,14 @@ from typing import Dict
 import pyautogui
 import requests as req
 
+from config import BROWSER_PATH
+
 logger = logging.getLogger(__name__)
 
-BRAVE_PATH = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
-
-
 def _open_url(url: str) -> None:
-    """Open URL in existing Brave browser as new tab."""
+    """Open URL in existing browser as new tab."""
     try:
-        subprocess.Popen([BRAVE_PATH, url])
+        subprocess.Popen([BROWSER_PATH, url])
     except Exception:
         # Fallback to default browser
         webbrowser.open(url)
