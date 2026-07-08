@@ -12,3 +12,8 @@ pillow
 pyttsx3
 vosk
 schedule
+
+soundcard
+soundfile
+ShazamAPI
+pydub
