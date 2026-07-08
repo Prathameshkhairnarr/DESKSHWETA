@@ -55,13 +55,88 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "response_text": {"type": "string", "description": "Your response to the user in Hinglish."},
                             "emotion": {"type": "string", "enum": ["happy", "sad", "angry", "surprised", "relaxed", "neutral", "joy", "fun", "sorrow", "bored", "sleepy", "think", "wink", "pout"], "description": "The emotion you should display while saying this."}
                         },
-                        "required": ["response_text", "emotion"]
+                        "required": ["response_text", "emotion", "spoken_reply"]
                     }
                 }
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_time",
+                    "description": "Get the current local time.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."}
+                        },
+                        "required": ["spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_date",
+                    "description": "Get today's local date.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."}
+                        },
+                        "required": ["spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather and temperature for a given city.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
+                            "city": {"type": "string", "description": "The name of the city (e.g. Pune, Mumbai, Delhi). Leave empty for default city."}
+                        },
+                        "required": ["city", "spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "open_google",
+                    "description": "Search something on Google.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "The search query."},
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."}
+                        },
+                        "required": ["query", "spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "open_website",
+                    "description": "Open a specific website by URL in the default browser.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "The full URL to open (e.g. https://www.google.com)"},
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."}
+                        },
+                        "required": ["url", "spoken_reply"]
+                    }
+                }
+            },
+
             {
                 "type": "function",
                 "function": {
@@ -70,9 +145,10 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "query": {"type": "string", "description": "What the user wants to know about the screen."}
                         },
-                        "required": ["query"]
+                        "required": ["query", "spoken_reply"]
                     }
                 }
             },
@@ -84,10 +160,11 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "filename": {"type": "string", "description": "Name of the file (e.g., notes.txt, report.docx)."},
                             "content": {"type": "string", "description": "The content to put inside the file."}
                         },
-                        "required": ["filename", "content"]
+                        "required": ["filename", "content", "spoken_reply"]
                     }
                 }
             },
@@ -99,9 +176,10 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "target": {"type": "string", "description": "The app name or URL to open."}
                         },
-                        "required": ["target"]
+                        "required": ["target", "spoken_reply"]
                     }
                 }
             },
@@ -113,9 +191,10 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "command": {"type": "string", "description": "The action to perform."}
                         },
-                        "required": ["command"]
+                        "required": ["command", "spoken_reply"]
                     }
                 }
             },
@@ -127,10 +206,11 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "old_name": {"type": "string", "description": "Current name of the file."},
                             "new_name": {"type": "string", "description": "New name of the file."}
                         },
-                        "required": ["old_name", "new_name"]
+                        "required": ["old_name", "new_name", "spoken_reply"]
                     }
                 }
             },
@@ -142,9 +222,10 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "filename": {"type": "string", "description": "Name of the file to delete."}
                         },
-                        "required": ["filename"]
+                        "required": ["filename", "spoken_reply"]
                     }
                 }
             },
@@ -156,10 +237,11 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "filename": {"type": "string", "description": "Name of the file to move."},
                             "destination": {"type": "string", "description": "Destination folder (e.g., Desktop, Documents)."}
                         },
-                        "required": ["filename", "destination"]
+                        "required": ["filename", "destination", "spoken_reply"]
                     }
                 }
             },
@@ -171,10 +253,40 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "filename": {"type": "string", "description": "Name of the file to copy."},
                             "destination": {"type": "string", "description": "Destination folder (e.g., Desktop, Documents)."}
                         },
-                        "required": ["filename", "destination"]
+                        "required": ["filename", "destination", "spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "remember_user_info",
+                    "description": "Remember a piece of information about the user (e.g. name, preferences) for future use.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "info": {"type": "string", "description": "The specific fact or preference to remember."},
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply confirming you remembered it."}
+                        },
+                        "required": ["info", "spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "identify_music",
+                    "description": "Listen to the desktop audio to identify the current song or music playing.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say before starting to listen."}
+                        },
+                        "required": ["spoken_reply"]
                     }
                 }
             },
@@ -186,9 +298,10 @@ class ToolBrain:
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
                             "query": {"type": "string", "description": "The search query, song name, or topic to play."}
                         },
-                        "required": ["query"]
+                        "required": ["query", "spoken_reply"]
                     }
                 }
             },
@@ -197,7 +310,8 @@ class ToolBrain:
                 "function": {
                     "name": "media_play_pause",
                     "description": "Play or pause the current video or media.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -205,7 +319,8 @@ class ToolBrain:
                 "function": {
                     "name": "media_next",
                     "description": "Play the next video or media.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -213,7 +328,8 @@ class ToolBrain:
                 "function": {
                     "name": "media_previous",
                     "description": "Play the previous video or media.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -221,7 +337,8 @@ class ToolBrain:
                 "function": {
                     "name": "browser_new_tab",
                     "description": "Open a new browser tab.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -229,7 +346,8 @@ class ToolBrain:
                 "function": {
                     "name": "browser_close_tab",
                     "description": "Close the current browser tab.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -237,7 +355,8 @@ class ToolBrain:
                 "function": {
                     "name": "volume_up",
                     "description": "Increase system volume.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -245,7 +364,8 @@ class ToolBrain:
                 "function": {
                     "name": "volume_down",
                     "description": "Decrease system volume.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -253,7 +373,8 @@ class ToolBrain:
                 "function": {
                     "name": "volume_mute",
                     "description": "Mute or unmute system volume.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -261,7 +382,8 @@ class ToolBrain:
                 "function": {
                     "name": "brightness_up",
                     "description": "Increase screen brightness.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -269,7 +391,8 @@ class ToolBrain:
                 "function": {
                     "name": "brightness_down",
                     "description": "Decrease screen brightness.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -277,7 +400,8 @@ class ToolBrain:
                 "function": {
                     "name": "start_gesture",
                     "description": "Start camera gesture control (hand tracking).",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             },
             {
@@ -285,7 +409,8 @@ class ToolBrain:
                 "function": {
                     "name": "stop_gesture",
                     "description": "Stop camera gesture control.",
-                    "parameters": {"type": "object", "properties": {}}
+                    "parameters": {"type": "object", "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},}}
                 }
             }
         ]
@@ -302,6 +427,13 @@ class ToolBrain:
             self.conversation_history = self.conversation_history[-10:]
 
         system_msg = SYSTEM_PROMPT + "\n\nYou are Shweta, a witty and helpful AI assistant. Always respond in Hinglish. You MUST use tools to perform actions. If the user just wants to chat, use the chat_reply tool."
+        try:
+            with open("memory.txt", "r", encoding="utf-8") as f:
+                mem = f.read().strip()
+                if mem:
+                    system_msg += "\n\nHere are some things you know about the user:\n" + mem
+        except Exception:
+            pass
         if self._user_context:
             system_msg += f"\n\nContext:\n{self._user_context}"
 
@@ -354,23 +486,39 @@ class ToolBrain:
                     elif tool_name == "react_to_screen":
                         return {"action": "react_to_screen", "params": {"query": tool_input.get("query", "")}, "reply": "Hold on, dekhti hoon...", "emotion": "thinking"}
                     elif tool_name == "create_file":
-                        return {"action": "create_file", "params": {"filename": tool_input.get("filename"), "content": tool_input.get("content")}, "reply": f"Ban rahi hai file: {tool_input.get('filename')}", "emotion": "neutral"}
+                        return {"action": "create_file", "params": {"filename": tool_input.get("filename"), "content": tool_input.get("content")}, "reply": tool_input.get("spoken_reply", f"Ban rahi hai file: {tool_input.get('filename')}"), "emotion": "neutral"}
+                    elif tool_name == "get_time":
+                        return {"action": "get_time", "params": {}, "reply": tool_input.get("spoken_reply", "Time batati hoon..."), "emotion": "neutral"}
+                    elif tool_name == "get_date":
+                        return {"action": "get_date", "params": {}, "reply": tool_input.get("spoken_reply", "Date dekhti hoon..."), "emotion": "neutral"}
+                    elif tool_name == "get_weather":
+                        city = tool_input.get("city", "")
+                        return {"action": "get_weather", "params": {"city": city}, "reply": f"Mausam check kar rahi hu...", "emotion": "thinking"}
+
                     elif tool_name == "open_app":
-                        return {"action": "open_app", "params": {"target": tool_input.get("target", "")}, "reply": f"Opening {tool_input.get('target', '')}", "emotion": "neutral"}
+                        return {"action": "open_app", "params": {"target": tool_input.get("target", "")}, "reply": tool_input.get("spoken_reply", f"Opening {tool_input.get('target', '')}"), "emotion": "neutral"}
                     elif tool_name == "run_command":
-                        return {"action": "run_command", "params": {"command": tool_input.get("command", "")}, "reply": "Executing command.", "emotion": "neutral"}
+                        return {"action": "run_command", "params": {"command": tool_input.get("command", "")}, "reply": tool_input.get("spoken_reply", "Executing command."), "emotion": "neutral"}
                     elif tool_name == "rename_file":
-                        return {"action": "rename_file", "params": {"old_name": tool_input.get("old_name"), "new_name": tool_input.get("new_name")}, "reply": f"Renaming {tool_input.get('old_name')} to {tool_input.get('new_name')}", "emotion": "neutral"}
+                        return {"action": "rename_file", "params": {"old_name": tool_input.get("old_name"), "new_name": tool_input.get("new_name")}, "reply": tool_input.get("spoken_reply", f"Renaming {tool_input.get('old_name')} to {tool_input.get('new_name')}"), "emotion": "neutral"}
                     elif tool_name == "delete_file":
-                        return {"action": "delete_file", "params": {"filename": tool_input.get("filename")}, "reply": f"Deleting file {tool_input.get('filename')}", "emotion": "neutral"}
+                        return {"action": "delete_file", "params": {"filename": tool_input.get("filename")}, "reply": tool_input.get("spoken_reply", f"Deleting file {tool_input.get('filename')}"), "emotion": "neutral"}
                     elif tool_name == "move_file":
-                        return {"action": "move_file", "params": {"filename": tool_input.get("filename"), "destination": tool_input.get("destination")}, "reply": f"Moving {tool_input.get('filename')} to {tool_input.get('destination')}", "emotion": "neutral"}
+                        return {"action": "move_file", "params": {"filename": tool_input.get("filename"), "destination": tool_input.get("destination")}, "reply": tool_input.get("spoken_reply", f"Moving {tool_input.get('filename')} to {tool_input.get('destination')}"), "emotion": "neutral"}
                     elif tool_name == "copy_file":
-                        return {"action": "copy_file", "params": {"filename": tool_input.get("filename"), "destination": tool_input.get("destination")}, "reply": f"Copying {tool_input.get('filename')} to {tool_input.get('destination')}", "emotion": "neutral"}
+                        return {"action": "copy_file", "params": {"filename": tool_input.get("filename"), "destination": tool_input.get("destination")}, "reply": tool_input.get("spoken_reply", f"Copying {tool_input.get('filename')} to {tool_input.get('destination')}"), "emotion": "neutral"}
+                    elif tool_name == "remember_user_info":
+                        return {"action": "remember_user_info", "params": {"info": tool_input.get("info", "")}, "reply": tool_input.get("spoken_reply", "Maine yaad kar liya."), "emotion": "happy"}
+                    elif tool_name == "identify_music":
+                        return {"action": "identify_music", "params": {}, "reply": tool_input.get("spoken_reply", "Ek second, gaana sunti hu..."), "emotion": "curious"}
                     elif tool_name == "play_youtube":
-                        return {"action": "play_youtube", "params": {"query": tool_input.get("query", "")}, "reply": "Youtube par play kar rahi hu.", "emotion": "happy"}
+                        return {"action": "play_youtube", "params": {"query": tool_input.get("query", "")}, "reply": tool_input.get("spoken_reply", "Youtube par play kar rahi hu."), "emotion": "happy"}
+                    elif tool_name == "open_google":
+                        return {"action": "open_google", "params": {"query": tool_input.get("query", "")}, "reply": tool_input.get("spoken_reply", "Google par search kar rahi hoon..."), "emotion": "neutral"}
+                    elif tool_name == "open_website":
+                        return {"action": "open_website", "params": {"url": tool_input.get("url", "")}, "reply": tool_input.get("spoken_reply", "Opening website..."), "emotion": "neutral"}
                     elif tool_name in ["media_play_pause", "media_next", "media_previous", "browser_new_tab", "browser_close_tab", "volume_up", "volume_down", "volume_mute", "brightness_up", "brightness_down", "start_gesture", "stop_gesture"]:
-                        return {"action": tool_name, "params": {}, "reply": "Theek hai, kar diya.", "emotion": "happy"}
+                        return {"action": tool_name, "params": {}, "reply": tool_input.get("spoken_reply", "Theek hai, kar diya."), "emotion": "happy"}
                         
             elif response_message.content:
                 text_content = response_message.content

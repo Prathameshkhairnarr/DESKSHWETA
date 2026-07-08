@@ -140,17 +140,17 @@ def get_weather(city: str = "") -> Dict[str, str]:
         condition = WMO_CODES.get(weather_code, "pata nahi")
 
         message = (
-            f"{city.title()} mein abhi {temp}°C hai, "
+            f"{city.title()} mein abhi {temp} degree hai, "
             f"mausam {condition} hai, "
             f"humidity {humidity}% aur hawa {wind_speed} km/h chal rahi hai."
         )
 
-        logger.info(f"Weather fetched for {city}: {temp}°C, {condition}")
+        logger.info(f"Weather fetched for {city}: {temp} degree, {condition}")
 
         return {
             "status": "success",
             "message": message,
-            "temperature": f"{temp}°C",
+            "temperature": f"{temp} degree",
             "condition": condition,
             "humidity": f"{humidity}%",
             "wind_speed": f"{wind_speed} km/h",

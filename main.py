@@ -384,6 +384,14 @@ class ShwetaAssistant:
             if action == "clear_history":
                 self.ai_brain.clear_history()
             else:
+                long_actions = ["identify_music", "react_to_screen", "browser_agent_task", "search_file", "play_youtube"]
+                if action in long_actions and reply:
+                    self.ui.schedule(self.ui.set_text, f"?? {reply}")
+                    self.ui.schedule(self.ui.show_chat_bubble, reply, 6.0)
+                    self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+                    current_voice = self.desktop_control.language.get_voice()
+                    self.voice_output.speak(reply, voice=current_voice)
+                
                 result = self.desktop_control.execute(action, params)
                 logger.info(f"Action result: {result}")
 
@@ -403,14 +411,16 @@ class ShwetaAssistant:
 
         # For info actions: use action result as the spoken reply
         info_actions = ["get_crypto_price", "get_stock_market", "get_news", "get_gold_price",
-                        "get_battery", "get_ram_usage", "get_storage",
+                        "get_battery", "get_ram_usage", "get_storage", "get_weather",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
                         "get_date", "list_files", "search_file", "list_notes", "daily_briefing",
-                        "morning_briefing", "browser_agent_task", "react_to_screen"]
+                        "morning_briefing", "browser_agent_task", "react_to_screen", "identify_music"]
         if action in info_actions and action_message:
             clean_msg = action_message.replace("📈", "").replace("📉", "").replace("🥇", "").replace("🥈", "").replace("🔋", "").replace("💾", "").replace("🖥️", "").replace("💿", "").replace("📝", "").replace("🕐", "").replace("🌤", "").strip()
-            # Browser agent and Screen Reactions need more chars
-            max_len = 500 if action in ["browser_agent_task", "react_to_screen"] else 150
+            import re
+            clean_msg = re.sub(r'[\{\}\[\]\"\']', '', clean_msg)
+            # Browser agent needs max length, Screen Reactions should NOT be truncated
+            max_len = 500 if action == "browser_agent_task" else (5000 if action == "react_to_screen" else 150)
             if len(clean_msg) > max_len:
                 clean_msg = clean_msg[:max_len]
             reply = clean_msg
@@ -421,9 +431,11 @@ class ShwetaAssistant:
                 import random
                 # Add a physical reaction for screen content
                 anims = ["look_around", "head_tilt_left", "head_tilt_right", "nod"]
-                emotions = ["happy", "curious", "surprised"]
+                extracted_emotion = result.get("emotion") if isinstance(result, dict) else None
+                if not extracted_emotion or extracted_emotion not in ["happy", "sad", "angry", "surprised", "relaxed", "neutral", "joy", "fun", "sorrow", "bored", "sleepy", "think", "wink", "pout", "scared"]:
+                    extracted_emotion = random.choice(["happy", "curious", "surprised"])
                 self.ui.schedule(self.ui.trigger_idle_animation, random.choice(anims))
-                self.ui.schedule(self.ui.set_emotion, random.choice(emotions), 0.7)
+                self.ui.schedule(self.ui.set_emotion, extracted_emotion, 0.7)
 
             self.ui.schedule(self.ui.set_text, f"💬 {reply}")
             self.ui.schedule(self.ui.show_chat_bubble, reply, 6.0)

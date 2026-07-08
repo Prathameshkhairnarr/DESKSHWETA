@@ -125,6 +125,8 @@ class DesktopController:
         # Map action names to handler functions
         self._action_map: Dict[str, Callable] = {
             # Browser skills
+                        "remember_user_info": self._remember_user_info,
+            "identify_music": self._identify_music,
             "open_youtube": self._open_youtube,
             "open_google": self._open_google,
             "open_website": self._open_website,
@@ -205,6 +207,8 @@ class DesktopController:
             "open_file": self._open_file,
             "search_file": self._search_file,
             "search_and_open": self._search_and_open,
+            "compress_folder": self._compress_folder,
+            "extract_zip": self._extract_zip,
             # System Info
             "get_battery": self._get_battery,
             "get_ram_usage": self._get_ram_usage,
@@ -811,6 +815,19 @@ class DesktopController:
             return {"status": "error", "message": "Search name not provided."}
         return file_skills.search_and_open(name)
 
+    def _compress_folder(self, params: Dict) -> Dict[str, str]:
+        folder_path = params.get("folder_path", "")
+        if not folder_path:
+            return {"status": "error", "message": "Folder ka path nahi bataya."}
+        return file_skills.compress_folder(folder_path)
+
+    def _extract_zip(self, params: Dict) -> Dict[str, str]:
+        zip_path = params.get("zip_path", "")
+        extract_to = params.get("extract_to", None)
+        if not zip_path:
+            return {"status": "error", "message": "Zip file ka path nahi bataya."}
+        return file_skills.extract_zip(zip_path, extract_to)
+
     # --- System Info wrappers ---
 
     def _get_battery(self, params: Dict) -> Dict[str, str]:
@@ -1040,6 +1057,25 @@ class DesktopController:
     def _set_mode(self, params: Dict) -> Dict[str, str]:
         mode = params.get("mode", "fun")
         return self.personality.set_mode(mode)
+
+
+    def _remember_user_info(self, params):
+        info = params.get("info", "")
+        if info:
+            try:
+                with open("memory.txt", "a", encoding="utf-8") as f:
+                    f.write(f"- {info}\n")
+            except Exception as e:
+                pass
+        return {"status": "success", "message": "Remembered"}
+
+    def _identify_music(self, params):
+        try:
+            from assistant.skills.music_id import identify_now_playing
+            result = identify_now_playing()
+            return {"status": "success", "message": result}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     def _remember(self, params: Dict) -> Dict[str, str]:
         key = params.get("key", "")

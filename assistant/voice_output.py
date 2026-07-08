@@ -743,11 +743,17 @@ class VoiceOutput:
             duration = len(data) / samplerate
             self._wait_interruptible(duration)
 
-        # Stop playback (in case of interrupt)
-        try:
-            sd_play.stop()
-        except Exception:
-            pass
+        # Stop playback ONLY if interrupted, otherwise wait for it to finish gracefully
+        if self._interrupt_event.is_set():
+            try:
+                sd_play.stop()
+            except Exception:
+                pass
+        else:
+            try:
+                sd_play.wait()
+            except Exception:
+                pass
 
     def _run_lip_sync(self, data: np.ndarray, samplerate: int) -> None:
         """

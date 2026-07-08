@@ -345,7 +345,6 @@ class VoiceInput:
                 "encoding": "LINEAR16",
                 "sampleRateHertz": SAMPLE_RATE,
                 "languageCode": "en-IN",
-                "alternativeLanguageCodes": ["hi-IN"],
                 "enableAutomaticPunctuation": False,
             },
             "audio": {

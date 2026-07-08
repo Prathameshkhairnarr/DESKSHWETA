@@ -655,7 +655,19 @@ class AIBrain:
 
     def _build_dynamic_prompt(self, lang_instruction: str) -> str:
         """Build the full system prompt with context injections."""
-        prompt = SYSTEM_PROMPT
+        now = datetime.now()
+        current_time_str = now.strftime('%I:%M %p')
+        current_date_str = now.strftime('%d %B %Y, %A')
+        time_context = "\n\nCURRENT CONTEXT:\n- Current Time: " + current_time_str + "\n- Today's Date: " + current_date_str + "\n\n"
+        
+        prompt = SYSTEM_PROMPT + time_context
+        try:
+            with open("memory.txt", "r", encoding="utf-8") as f:
+                mem = f.read().strip()
+                if mem:
+                    prompt += "\n\nHere are some things you know about the user:\n" + mem
+        except Exception:
+            pass
         if self._user_context:
             prompt += f"\n\nUSER CONTEXT (use this to personalize):\n{self._user_context}"
         if lang_instruction:
