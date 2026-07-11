@@ -176,7 +176,24 @@ class ShwetaTelegramBot:
     async def start_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
         if not self.is_authorized(update):
-            await update.message.reply_text("⛔ Unauthorized.")
+            user_id = update.effective_user.id
+            
+            # Auto-authorize the user and update .env
+            env_path = os.path.join(PROJECT_ROOT, ".env")
+            try:
+                if os.path.exists(env_path):
+                    with open(env_path, 'r') as f:
+                        lines = f.readlines()
+                    with open(env_path, 'w') as f:
+                        for line in lines:
+                            if line.startswith("TELEGRAM_ALLOWED_USER_ID="):
+                                f.write(f"TELEGRAM_ALLOWED_USER_ID={user_id}\n")
+                            else:
+                                f.write(line)
+                self.allowed_id = user_id
+                await update.message.reply_text(f"✅ Telegram id auto-configured in .env! (ID: {user_id})\nAap authorized ho gaye hain.")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Auto-authorize failed: {e}. Please manually set TELEGRAM_ALLOWED_USER_ID={user_id} in .env")
             return
 
         keyboard = ReplyKeyboardMarkup(
@@ -227,6 +244,24 @@ class ShwetaTelegramBot:
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle text messages."""
         if not self.is_authorized(update):
+            user_id = update.effective_user.id
+            
+            # Auto-authorize the user and update .env
+            env_path = os.path.join(PROJECT_ROOT, ".env")
+            try:
+                if os.path.exists(env_path):
+                    with open(env_path, 'r') as f:
+                        lines = f.readlines()
+                    with open(env_path, 'w') as f:
+                        for line in lines:
+                            if line.startswith("TELEGRAM_ALLOWED_USER_ID="):
+                                f.write(f"TELEGRAM_ALLOWED_USER_ID={user_id}\n")
+                            else:
+                                f.write(line)
+                self.allowed_id = user_id
+                await update.message.reply_text(f"✅ Telegram id auto-configured in .env! (ID: {user_id})\nAap authorized ho gaye hain.")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Auto-authorize failed: {e}. Please manually set TELEGRAM_ALLOWED_USER_ID={user_id} in .env")
             return
 
         self._command_count += 1

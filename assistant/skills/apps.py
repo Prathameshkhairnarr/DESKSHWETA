@@ -227,7 +227,14 @@ def open_app(app_name: str) -> Dict[str, str]:
                 except Exception:
                     subprocess.Popen(command, shell=True)
             else:
-                subprocess.Popen(f'start "" "{app_name}"', shell=True)
+                import pyautogui
+                import time
+                # Fallback: Simulate user opening start menu and typing app name
+                pyautogui.press('win')
+                time.sleep(0.5)
+                pyautogui.write(app_name)
+                time.sleep(0.5)
+                pyautogui.press('enter')
 
             logger.info(f"Opened app: {app_name}")
             return {"status": "success", "message": f"{app_name} khol diya."}
@@ -240,3 +247,83 @@ def open_app(app_name: str) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"Failed to open {app_name}: {e}")
         return {"status": "error", "message": str(e)}
+
+
+def send_social_message(app_name: str, person_name: str, message: str) -> Dict[str, str]:
+    """
+    Automate sending a message on any social media app using PyAutoGUI.
+    """
+    try:
+        import pyautogui
+        import time
+        import webbrowser
+        
+        # --- INSTAGRAM SPECIAL HANDLING ---
+        if app_name.lower() in ["instagram", "ig", "insta"]:
+            logger.info("Using Instagram App automation flow.")
+            import os
+            # Use Windows protocol to open the Instagram App directly to the New Message screen
+            os.system("start instagram://direct/new")
+            time.sleep(5.0) # Wait for IG App to load and auto-focus search bar
+            
+            # Type person name in the search box
+            pyautogui.write(person_name)
+            time.sleep(3.0) # Wait for network search results
+            
+            # Instagram keyboard accessibility flow
+            pyautogui.press('tab')      # Move from search box to first result radio button
+            time.sleep(0.5)
+            pyautogui.press('space')    # Select the first result
+            time.sleep(0.5)
+            
+            # Press Tab 2 times to reach the 'Chat' / 'Next' button
+            pyautogui.press('tab')
+            time.sleep(0.2)
+            pyautogui.press('tab')
+            time.sleep(0.2)
+            
+            # Press enter to open the chat
+            pyautogui.press('enter')
+            time.sleep(3.0) # Wait for chat window to load and focus input box
+            
+            # Type message and send
+            pyautogui.write(message)
+            time.sleep(0.5)
+            pyautogui.press('enter')
+            
+            logger.info(f"Automated message sent to {person_name} on Instagram")
+            return {"status": "success", "message": f"Instagram par {person_name} ko message bhej diya."}
+            
+        # --- GENERIC FALLBACK (WhatsApp/Telegram Desktop) ---
+        # 1. Open the app using the fallback keyboard automation
+        pyautogui.press('win')
+        time.sleep(0.5)
+        pyautogui.write(app_name)
+        time.sleep(0.5)
+        pyautogui.press('enter')
+        
+        # 2. Wait for the app to open
+        time.sleep(2.0)
+        
+        # 3. Simulate Ctrl+F to focus the search bar
+        pyautogui.hotkey('ctrl', 'f')
+        time.sleep(0.5)
+        
+        # 4. Type the person's name
+        pyautogui.write(person_name)
+        time.sleep(1.0) # Wait for search results
+        
+        # 5. Press Enter to open the chat
+        pyautogui.press('enter')
+        time.sleep(0.5)
+        
+        # 6. Type the message and send
+        pyautogui.write(message)
+        time.sleep(0.5)
+        pyautogui.press('enter')
+        
+        logger.info(f"Automated message sent to {person_name} on {app_name}")
+        return {"status": "success", "message": f"{app_name} par {person_name} ko message bhej diya."}
+    except Exception as e:
+        logger.error(f"Error sending social message: {e}")
+        return {"status": "error", "message": f"Message bhejne mein error aaya: {e}"}

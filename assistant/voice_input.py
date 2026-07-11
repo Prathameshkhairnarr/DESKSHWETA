@@ -236,7 +236,16 @@ class VoiceInput:
         # Open mic stream with context manager (guaranteed cleanup)
         stream = None
         try:
+            import sounddevice as sd
+            # Find a safe MME device (like Microsoft Sound Mapper) to avoid WDM-KS Blocking API crashes
+            safe_dev = None
+            for i, d in enumerate(sd.query_devices()):
+                if d['max_input_channels'] > 0 and 'MME' in sd.query_hostapis(d['hostapi'])['name']:
+                    safe_dev = i
+                    break
+                    
             stream = sd.InputStream(
+                device=safe_dev,
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype='float32',
@@ -244,9 +253,35 @@ class VoiceInput:
             )
             stream.start()
         except sd.PortAudioError as e:
-            self.last_error = ERROR_MESSAGES["mic_busy"]
-            logger.error(f"Cannot open mic stream: {e}")
-            return None
+            if "out of range" in str(e) or "-9999" in str(e) or "Invalid device" in str(e):
+                logger.warning("PortAudio device list stale (Bluetooth hotplug?). Re-initializing sounddevice...")
+                try:
+                    import sounddevice as _sd_refresh
+                    _sd_refresh._terminate()
+                    _sd_refresh._initialize()
+                    
+                    safe_dev_retry = None
+                    for i, d in enumerate(_sd_refresh.query_devices()):
+                        if d['max_input_channels'] > 0 and 'MME' in _sd_refresh.query_hostapis(d['hostapi'])['name']:
+                            safe_dev_retry = i
+                            break
+                            
+                    stream = _sd_refresh.InputStream(
+                        device=safe_dev_retry,
+                        samplerate=SAMPLE_RATE,
+                        channels=CHANNELS,
+                        dtype='float32',
+                        blocksize=CHUNK_SAMPLES,
+                    )
+                    stream.start()
+                except Exception as retry_e:
+                    self.last_error = ERROR_MESSAGES["mic_busy"]
+                    logger.error(f"Cannot open mic stream after re-init: {retry_e}")
+                    return None
+            else:
+                self.last_error = ERROR_MESSAGES["mic_busy"]
+                logger.error(f"Cannot open mic stream: {e}")
+                return None
         except Exception as e:
             self.last_error = ERROR_MESSAGES["mic_not_found"]
             logger.error(f"Mic stream open failed: {e}")

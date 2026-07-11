@@ -164,6 +164,7 @@ class DesktopController:
             "open_file_manager": self._open_file_manager,
             "type_text": self._type_text,
             "copy_to_clipboard": self._copy_to_clipboard,
+            "send_social_message": self._send_social_message,
             "empty_recycle_bin": self._empty_recycle_bin,
             "run_command": self._run_command,
             "shutdown_pc": self._shutdown_pc,
@@ -177,6 +178,7 @@ class DesktopController:
             "open_spotify": self._open_spotify,
             "close_app": self._close_app,
             "open_app": self._open_app,
+            "send_file_to_telegram": self._send_file_to_telegram,
             # Weather
             "get_weather": self._get_weather,
             # Timer/Reminder
@@ -479,6 +481,13 @@ class DesktopController:
         return system.get_time()
 
     def _get_date(self, params: Dict) -> Dict[str, str]:
+        query_type = params.get("query_type", "date")
+        if query_type == "month":
+            import datetime
+            return {"status": "success", "message": f"Abhi {datetime.datetime.now().strftime('%B')} ka mahina chal raha hai.", "month": datetime.datetime.now().strftime('%B')}
+        elif query_type == "year":
+            import datetime
+            return {"status": "success", "message": f"Abhi {datetime.datetime.now().strftime('%Y')} chal raha hai.", "year": datetime.datetime.now().strftime('%Y')}
         return system.get_date()
 
     def _volume_up(self, params: Dict) -> Dict[str, str]:
@@ -579,11 +588,67 @@ class DesktopController:
         self._stop_music_vibe()
         return apps.close_app(app_name)
 
+    def _send_file_to_telegram(self, params: Dict) -> Dict[str, str]:
+        file_name = params.get("file_name", "").lower()
+        if not file_name:
+            return {"status": "error", "message": "File name is required."}
+            
+        import os
+        from pathlib import Path
+        import requests
+        
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.getenv("TELEGRAM_ALLOWED_USER_ID", "")
+        if not token or not chat_id:
+            return {"status": "error", "message": "Telegram Token ya User ID missing hai .env file mein."}
+
+        # Search common directories
+        search_dirs = [
+            Path(os.path.expanduser("~/Desktop")),
+            Path(os.path.expanduser("~/Downloads")),
+            Path(os.path.expanduser("~/Documents")),
+            Path(os.path.expanduser("~/Pictures"))
+        ]
+        
+        found_file = None
+        for d in search_dirs:
+            if not d.exists(): continue
+            try:
+                for f in d.rglob("*"):
+                    if f.is_file() and file_name in f.name.lower():
+                        found_file = str(f)
+                        break
+                if found_file: break
+            except Exception:
+                pass
+                
+        if not found_file:
+            return {"status": "error", "message": f"'{file_name}' naam ki koi file nahi mili."}
+            
+        try:
+            url = f"https://api.telegram.org/bot{token}/sendDocument"
+            with open(found_file, 'rb') as f_data:
+                response = requests.post(url, data={"chat_id": chat_id}, files={"document": f_data})
+                if response.status_code == 200:
+                    return {"status": "success", "message": f"Main telegram par bhej di hai: {os.path.basename(found_file)}"}
+                else:
+                    return {"status": "error", "message": f"Telegram server ne mana kar diya: {response.text}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     def _open_app(self, params: Dict) -> Dict[str, str]:
-        app_name = params.get("app_name", "")
+        app_name = params.get("app_name", params.get("target", ""))
         if not app_name:
             return {"status": "error", "message": "App name not provided."}
         return apps.open_app(app_name)
+        
+    def _send_social_message(self, params: Dict) -> Dict[str, str]:
+        app_name = params.get("app_name", "")
+        person_name = params.get("person_name", "")
+        message = params.get("message", "")
+        if not app_name or not person_name or not message:
+            return {"status": "error", "message": "App name, person name, and message are required."}
+        return apps.send_social_message(app_name, person_name, message)
 
     # --- Weather skill wrapper ---
 

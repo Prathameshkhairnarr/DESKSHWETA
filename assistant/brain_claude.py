@@ -32,6 +32,32 @@ class ClaudeBrain:
     def _get_tools(self) -> List[Dict[str, Any]]:
         return [
             {
+                "name": "remember_user_info",
+                "description": "Remember a piece of information about the user (e.g. name, preferences) for future use.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "info": {"type": "string", "description": "The specific fact or preference to remember."},
+                        "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply confirming you remembered it."}
+                    },
+                    "required": ["info", "spoken_reply"]
+                }
+            },
+            {
+                "name": "send_social_message",
+                "description": "Send a message to a person on a specific social media app (like WhatsApp, Instagram, Telegram, etc.) using automated typing.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
+                        "app_name": {"type": "string", "description": "The name of the app to open (e.g., 'WhatsApp', 'Instagram', 'Telegram')."},
+                        "person_name": {"type": "string", "description": "The name of the person to send the message to."},
+                        "message": {"type": "string", "description": "The text message to send."}
+                    },
+                    "required": ["spoken_reply", "app_name", "person_name", "message"]
+                }
+            },
+            {
                 "name": "chat_reply",
                 "description": "Just talk to the user. Use this when the user is asking a conversational question, wants to chat, or asks for general information.",
                 "input_schema": {
@@ -147,7 +173,9 @@ class ClaudeBrain:
         if len(self.conversation_history) > 10:
             self.conversation_history = self.conversation_history[-10:]
 
-        system_msg = SYSTEM_PROMPT + "\n\nYou are Shweta, a witty and helpful AI assistant. Always respond in Hinglish. You MUST use tools to perform actions. If the user just wants to chat, use the chat_reply tool."
+        from datetime import datetime
+        current_time = datetime.now().strftime("%I:%M %p on %A, %B %d, %Y")
+        system_msg = f"CURRENT TIME: {current_time}\n\n" + SYSTEM_PROMPT + "\n\nYou are Shweta, a witty and helpful AI assistant. Always respond in Hinglish unless the user speaks to you purely in English. You MUST use tools to perform actions. If the user just wants to chat, use the chat_reply tool."
         if self._user_context:
             system_msg += f"\n\nContext:\n{self._user_context}"
 
@@ -181,6 +209,8 @@ class ClaudeBrain:
                         # Map Claude tools to existing DESKSHWETA actions
                         if tool_name == "chat_reply":
                             return {"action": "none", "params": {}, "reply": tool_input.get("response_text", ""), "emotion": "neutral"}
+                        elif tool_name == "remember_user_info":
+                            return {"action": "remember_user_info", "params": {"info": tool_input.get("info", "")}, "reply": tool_input.get("spoken_reply", "Maine yaad kar liya."), "emotion": "happy"}
                         elif tool_name == "read_screen":
                             return {"action": "react_to_screen", "params": {"query": tool_input.get("query", "")}, "reply": "Hold on, dekhti hoon...", "emotion": "thinking"}
                         elif tool_name == "create_file":

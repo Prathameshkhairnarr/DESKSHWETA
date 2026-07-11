@@ -123,7 +123,7 @@ def read_screen(question: str = "Screen pe kya dikh raha hai?") -> Dict[str, str
                         ],
                         model="gpt-4o-mini",
                         temperature=0.6,
-                        max_tokens=200,
+                        max_tokens=800,
                     )
                     description = gh_resp.choices[0].message.content.strip()
                     logger.info(f"Screen read (GitHub): {description[:100]}")
@@ -205,7 +205,7 @@ def read_live_video(question: str) -> Dict[str, str]:
                         messages=[{"role": "user", "content": content_list}],
                         model="gpt-4o-mini",
                         temperature=0.7,
-                        max_tokens=250,
+                        max_tokens=800,
                     )
                     description = gh_resp.choices[0].message.content.strip()
                     logger.info(f"Live video read (GitHub): {description[:100]}")

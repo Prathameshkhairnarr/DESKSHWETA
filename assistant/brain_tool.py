@@ -81,13 +81,14 @@ class ToolBrain:
                 "type": "function",
                 "function": {
                     "name": "get_date",
-                    "description": "Get today's local date.",
+                    "description": "Get today's local date, month, or year depending on what the user asked.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."}
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
+                            "query_type": {"type": "string", "enum": ["date", "month", "year"], "description": "Whether the user wants the full date, just the month, or just the year."}
                         },
-                        "required": ["spoken_reply"]
+                        "required": ["spoken_reply", "query_type"]
                     }
                 }
             },
@@ -141,7 +142,7 @@ class ToolBrain:
                 "type": "function",
                 "function": {
                     "name": "react_to_screen",
-                    "description": "Capture the current screen (video/reel/image/webpage) and answer a question or give an opinion about it.",
+                    "description": "Capture the current screen (video/reel/image/webpage) and answer a visual question. DO NOT use this tool if the user is asking to identify a song or music playing in a video; use identify_music for that instead.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -156,15 +157,47 @@ class ToolBrain:
                 "type": "function",
                 "function": {
                     "name": "create_file",
-                    "description": "Create a document or file.",
+                    "description": "Create a document or file anywhere on the PC. You MUST construct the full absolute path based on the user's request. Also deduce the correct file extension.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
-                            "filename": {"type": "string", "description": "Name of the file (e.g., notes.txt, report.docx)."},
+                            "filename": {"type": "string", "description": "Full absolute path of the file to create, including the extension (e.g., D:\\Projects\\new_folder\\script.py). If no drive is specified, default to Desktop."},
                             "content": {"type": "string", "description": "The content to put inside the file."}
                         },
                         "required": ["filename", "content", "spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_social_message",
+                    "description": "Send a message to a person on a specific social media app (like WhatsApp, Instagram, Telegram, etc.) using automated typing.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while executing this tool."},
+                            "app_name": {"type": "string", "description": "The name of the app to open (e.g., 'WhatsApp', 'Instagram', 'Telegram')."},
+                            "person_name": {"type": "string", "description": "The name of the person to send the message to."},
+                            "message": {"type": "string", "description": "The text message to send."}
+                        },
+                        "required": ["spoken_reply", "app_name", "person_name", "message"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_file_to_telegram",
+                    "description": "Send a local file from the PC to the user's Telegram chat.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational reply."},
+                            "file_name": {"type": "string", "description": "The exact name of the file or a partial name to search for."}
+                        },
+                        "required": ["spoken_reply", "file_name"]
                     }
                 }
             },
@@ -280,7 +313,7 @@ class ToolBrain:
                 "type": "function",
                 "function": {
                     "name": "identify_music",
-                    "description": "Listen to the desktop audio to identify the current song or music playing.",
+                    "description": "Listen to the desktop audio to identify the current song or music playing (including music playing inside any video or reel on the screen).",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -426,7 +459,9 @@ class ToolBrain:
         if len(self.conversation_history) > 10:
             self.conversation_history = self.conversation_history[-10:]
 
-        system_msg = SYSTEM_PROMPT + "\n\nYou are Shweta, a witty and helpful AI assistant. Always respond in Hinglish. You MUST use tools to perform actions. If the user just wants to chat, use the chat_reply tool."
+        from datetime import datetime
+        current_time = datetime.now().strftime("%I:%M %p on %A, %B %d, %Y")
+        system_msg = f"CURRENT TIME: {current_time}\n\n" + SYSTEM_PROMPT + "\n\nYou are Shweta, a witty and helpful AI assistant. Always respond in Hinglish unless the user speaks to you purely in English. You MUST use tools to perform actions. If the user just wants to chat, use the chat_reply tool."
         try:
             with open("memory.txt", "r", encoding="utf-8") as f:
                 mem = f.read().strip()
@@ -451,7 +486,7 @@ class ToolBrain:
                         messages=messages,
                         tools=self._get_tools(),
                         tool_choice="required",
-                        max_tokens=500,
+                        max_tokens=1000,
                     )
                 except Exception as main_e:
                     logger.warning(f"[ToolBrain] Main client (OpenAI) failed: {main_e}. Falling back to Groq.")
@@ -463,7 +498,7 @@ class ToolBrain:
                     messages=messages,
                     tools=self._get_tools(),
                     tool_choice="required",
-                    max_tokens=500,
+                    max_tokens=1000,
                 )
             
             latency = time.time() - start_time
@@ -490,11 +525,15 @@ class ToolBrain:
                     elif tool_name == "get_time":
                         return {"action": "get_time", "params": {}, "reply": tool_input.get("spoken_reply", "Time batati hoon..."), "emotion": "neutral"}
                     elif tool_name == "get_date":
-                        return {"action": "get_date", "params": {}, "reply": tool_input.get("spoken_reply", "Date dekhti hoon..."), "emotion": "neutral"}
+                        return {"action": "get_date", "params": {"query_type": tool_input.get("query_type", "date")}, "reply": tool_input.get("spoken_reply", "Date dekhti hoon..."), "emotion": "neutral"}
                     elif tool_name == "get_weather":
                         city = tool_input.get("city", "")
                         return {"action": "get_weather", "params": {"city": city}, "reply": f"Mausam check kar rahi hu...", "emotion": "thinking"}
 
+                    elif tool_name == "send_social_message":
+                        return {"action": "send_social_message", "params": {"app_name": tool_input.get("app_name", ""), "person_name": tool_input.get("person_name", ""), "message": tool_input.get("message", "")}, "reply": tool_input.get("spoken_reply", f"Sending message to {tool_input.get('person_name', '')} on {tool_input.get('app_name', '')}..."), "emotion": "neutral"}
+                    elif tool_name == "send_file_to_telegram":
+                        return {"action": "send_file_to_telegram", "params": {"file_name": tool_input.get("file_name", "")}, "reply": tool_input.get("spoken_reply", "Telegram par file bhej rahi hoon..."), "emotion": "neutral"}
                     elif tool_name == "open_app":
                         return {"action": "open_app", "params": {"target": tool_input.get("target", "")}, "reply": tool_input.get("spoken_reply", f"Opening {tool_input.get('target', '')}"), "emotion": "neutral"}
                     elif tool_name == "run_command":

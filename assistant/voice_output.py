@@ -464,7 +464,7 @@ class VoiceOutput:
         try:
             # Escape XML characters for SSML
             safe_text = text.replace("&", "and").replace("<", "").replace(">", "")
-            ssml_text = f'<speak><prosody rate="115%">{safe_text}</prosody></speak>'
+            ssml_text = f'<speak><prosody rate="115%">{safe_text}</prosody><break time="500ms"/></speak>'
             
             response = self._polly_client.synthesize_speech(
                 Text=ssml_text,
@@ -684,6 +684,11 @@ class VoiceOutput:
         text = text.replace("? ", "?... ")
         for word in [" toh ", " lekin ", " par ", " aur "]:
             text = text.replace(word, f"...{word}")
+            
+        # Force TTS engines to generate trailing silence so the last word is never clipped
+        if not text.endswith("..."):
+            text = text.strip() + "..."
+            
         return text
 
     def _play_with_lip_sync(self, mp3_path: str) -> None:
@@ -752,6 +757,10 @@ class VoiceOutput:
         else:
             try:
                 sd_play.wait()
+                # Hardware buffer flush padding: sd.wait() returns when software buffer is empty,
+                # but hardware still needs ~300ms to actually play the audio through speakers.
+                import time
+                time.sleep(0.4)
             except Exception:
                 pass
 

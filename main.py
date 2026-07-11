@@ -420,7 +420,7 @@ class ShwetaAssistant:
             import re
             clean_msg = re.sub(r'[\{\}\[\]\"\']', '', clean_msg)
             # Browser agent needs max length, Screen Reactions should NOT be truncated
-            max_len = 500 if action == "browser_agent_task" else (5000 if action == "react_to_screen" else 150)
+            max_len = 500 if action == "browser_agent_task" else 10000
             if len(clean_msg) > max_len:
                 clean_msg = clean_msg[:max_len]
             reply = clean_msg
@@ -715,6 +715,11 @@ class ShwetaAssistant:
             import threading
 
             def on_wake():
+                # Echo Cancellation: Ignore wake word if Shweta is already processing, listening, or speaking.
+                # This prevents her own voice from triggering the wake word and interrupting herself mid-sentence.
+                if getattr(self, '_is_processing', False) or getattr(self, '_is_listening', False) or self.voice_output.is_speaking:
+                    return
+                
                 # Visual feedback
                 self.ui.schedule(self.ui.set_emotion, "happy", 0.6)
                 self.ui.schedule(self.ui.show_chat_bubble, "Haan bolo!", 3.0)
@@ -766,6 +771,54 @@ class ShwetaAssistant:
 def main() -> None:
     """Application entry point."""
     try:
+        try:
+            import sounddevice as sd
+            from colorama import Fore, Style
+            
+            # --- BLUETOOTH AUTO-SYNC LOGIC ---
+            default_out_id = sd.default.device[1]
+            default_out = sd.query_devices(default_out_id)
+            out_name = default_out['name'].lower()
+            
+            ignore_words = {'headphones', 'headset', 'speaker', 'speakers', 'microphone', 'mic', 'array', 'audio', 'default', 'device', 'stereo', 'mix', 'realtek', 'high', 'definition'}
+            out_words = set(out_name.replace('(', ' ').replace(')', ' ').split())
+            out_keywords = out_words - ignore_words
+            
+            matched_in_id = None
+            best_match_score = 0
+            devices = sd.query_devices()
+            
+            if out_keywords:
+                for i, dev in enumerate(devices):
+                    if dev['max_input_channels'] > 0:
+                        in_name = dev['name'].lower()
+                        in_words = set(in_name.replace('(', ' ').replace(')', ' ').split())
+                        score = len(out_keywords.intersection(in_words))
+                        if score > 0 and score > best_match_score:
+                            if dev['hostapi'] == default_out['hostapi']:
+                                score += 0.5
+                            best_match_score = score
+                            matched_in_id = i
+                            
+            if matched_in_id is not None and matched_in_id != sd.default.device[0]:
+                sd.default.device = (matched_in_id, default_out_id)
+                auto_sync_msg = f"{Fore.GREEN}? Bluetooth Auto-Sync: Linked Mic to Speaker!{Style.RESET_ALL}\n"
+            else:
+                auto_sync_msg = ""
+            # ---------------------------------
+            
+            input_device = sd.query_devices(sd.default.device[0])['name']
+            output_device = sd.query_devices(sd.default.device[1])['name']
+            
+            print("\n" + "="*60)
+            if auto_sync_msg:
+                print(auto_sync_msg, end="")
+            print(f"{Fore.CYAN}?? ACTIVE MICROPHONE (Input)  : {Fore.YELLOW}{input_device}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}?? ACTIVE SPEAKER (Output)    : {Fore.YELLOW}{output_device}{Style.RESET_ALL}")
+            print("="*60 + "\n")
+        except Exception as e:
+            print(f"Could not setup/print audio devices: {e}")
+            
         # === ACTIVATION CHECK (before anything else) ===
         # In dev mode (no bundle file) this is skipped automatically
         if not setup_activation():

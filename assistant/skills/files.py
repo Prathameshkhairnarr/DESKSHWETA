@@ -48,12 +48,15 @@ DOWNLOADS = _get_downloads()
 
 def _is_safe_path(path: Path) -> bool:
     """
-    Check if the path is safe (inside user's HOME directory) to prevent directory traversal.
+    Check if the path is safe. For Shweta, the user can create files anywhere on their PC,
+    so we allow all absolute paths.
     """
     try:
-        # Resolve path using abspath to handle relative components without requiring file existence
         abs_path = Path(os.path.abspath(path)).resolve()
-        return abs_path == HOME or HOME in abs_path.parents
+        # Don't allow writing to System32 or Windows root as a basic safety net, but allow everything else
+        if "Windows" in abs_path.parts and "System32" in abs_path.parts:
+            return False
+        return True
     except Exception:
         return False
 

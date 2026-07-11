@@ -78,8 +78,13 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
                             print(f"[WakeWord] Found audio device by name '{target_name}' at index: {device_index}")
                             break
                     
-                    if device_index is None:
-                        print(f"[WakeWord] Warning: Configured device '{target_name}' not found. Falling back to system default.")
+        if device_index is None:
+            print(f"[WakeWord] Warning: Configured device '{target_name}' not found. Filtering for safe MME fallback...")
+            for i, d in enumerate(sd.query_devices()):
+                if d['max_input_channels'] > 0 and 'MME' in sd.query_hostapis(d['hostapi'])['name']:
+                    device_index = i
+                    print(f"[WakeWord] Selected safe fallback device index: {device_index} ({d['name']})")
+                    break
         
         # If device_index is None, sd.RawInputStream will use the default system input device
         stream = sd.RawInputStream(samplerate=16000, blocksize=4000, device=device_index, dtype='int16', channels=1)
