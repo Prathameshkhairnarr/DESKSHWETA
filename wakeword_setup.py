@@ -12,7 +12,7 @@ except ImportError:
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "assistant", "skills", "wakeword_config.json")
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "assistant", "skills", "wakeword_models", "vosk-model-small-en-in-0.4")
-TRIGGERS = ["shweta", "schweta", "shveta", "swetha", "sweta", "hey shweta", "oye shweta", "sun shweta"]
+TRIGGERS = ["shweta", "schweta", "shveta", "swetha", "sweta", "sweater", "hey shweta", "hey sweater", "oye shweta", "sun shweta"]
 
 def main():
     print("="*60)
@@ -50,7 +50,7 @@ def main():
             print("Please enter a number.")
 
     print(f"\nTesting Microphone: {devices[choice]['name']}")
-    print("Say 'Hey Shweta' to test if it works. Press Ctrl+C to stop and save.")
+    print("Say 'Hey Shweta' to test if it works (Vosk may display 'sweater'). Press Ctrl+C to stop and save.")
     print("-" * 50)
 
     q = queue.Queue()

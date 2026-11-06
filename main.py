@@ -15,10 +15,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import ASSISTANT_NAME, LOG_LEVEL, LOGS_DIR
+from config import ASSISTANT_NAME, LOG_LEVEL
 from assistant.voice_input import VoiceInput
 from assistant.voice_output import VoiceOutput
-from assistant.brain_tool import ToolBrain
+from assistant.agent_system import MultiAgentBrain
 from assistant.desktop_control import DesktopController
 from assistant.channels.telegram_bot import ShwetaTelegramBot
 from assistant.activation import setup_activation
@@ -34,14 +34,9 @@ sys.path.insert(0, str(Path(__file__).parent / "assistant" / "ui"))
 from avatar_window import AvatarWindow
 
 # Configure logging
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(LOGS_DIR / "errors.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
+# Configure beautiful terminal logging (colors, spacing, feature names)
+from assistant.terminal_ui import setup_terminal_logging, print_banner, print_status
+setup_terminal_logging(LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 
@@ -50,21 +45,45 @@ class ShwetaAssistant:
 
     def __init__(self) -> None:
         """Initialize all assistant components."""
+        # Print beautiful startup banner
+        print_banner()
         logger.info(f"Starting {ASSISTANT_NAME} AI Desktop Assistant...")
 
         # Command queue for thread-safe communication
         self.command_queue: queue.Queue = queue.Queue()
+        self._shutting_down = False
 
-        # Initialize components
+        # Initialize components with status display
+        print()
         self.voice_input = VoiceInput()
+        print_status("Voice Input", "OK" if self.voice_input.is_available else "FAIL",
+                     "Microphone detected" if self.voice_input.is_available else "No mic found")
+
         self.voice_output = VoiceOutput()
-        self.ai_brain = ToolBrain()
+        _vo = self.voice_output
+        if _vo._murf_available:
+            _vo_status, _vo_detail = "OK", "Murf Falcon 2.1 (Pooja, Conversational) + Polly fallback"
+        elif _vo._polly_available:
+            _vo_status, _vo_detail = "OK", "Amazon Polly (fallback only)"
+        else:
+            _vo_status, _vo_detail = "FAIL", "pyttsx3 offline only"
+        print_status("Voice Output", _vo_status, _vo_detail)
+
+        self.ai_brain = MultiAgentBrain()
+        print_status("AI Brain", "OK", self.ai_brain.status_label)
+
         self.desktop_control = DesktopController(
             on_timer_complete=self._on_timer_complete
         )
+        print_status("Desktop Control", "OK", "System + Apps + Files")
+        print()
 
         # Initialize PyQt5 Avatar UI (main thread)
-        self.ui = AvatarWindow(on_mic_click=self._on_mic_click, on_quick_action=self._on_quick_action)
+        self.ui = AvatarWindow(
+            on_mic_click=self._on_mic_click,
+            on_quick_action=self._on_quick_action,
+            on_close=self._begin_shutdown,
+        )
 
         # Connect lip sync: voice_output → avatar
         self.voice_output.set_lip_sync_callback(self._on_lip_sync)
@@ -148,12 +167,13 @@ class ShwetaAssistant:
             self.briefing_manager.deliver()
         else:
             # Simple greeting
-            greeting = f"Namaste! Main {ASSISTANT_NAME} hoon."
+            self._is_processing = True  # Prevent interruption during greeting
+            greeting = f"नमस्ते! मैं {ASSISTANT_NAME} हूँ।"
             self.ui.schedule(self.ui.set_text, greeting)
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
             self.voice_output.speak(
                 greeting,
-                callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+                callback=self._on_speaking_done
             )
 
     def _on_proactive_notify(self, message: str) -> None:
@@ -193,6 +213,8 @@ class ShwetaAssistant:
 
     def _on_quick_action(self, action_str: str) -> None:
         """Handle quick action button clicks from avatar UI."""
+        if self._shutting_down:
+            return
         import time
         self._last_activity_time = time.time()
         if self._is_processing:
@@ -227,6 +249,8 @@ class ShwetaAssistant:
 
     def _on_mic_click(self) -> None:
         """Handle mic click — if stuck in thinking/speaking, reset. Otherwise start listening."""
+        if self._shutting_down:
+            return
         import time
         self._last_activity_time = time.time()
 
@@ -253,6 +277,8 @@ class ShwetaAssistant:
     def _listen_and_process(self) -> None:
         """Listen for voice input and process it (runs in background thread)."""
         try:
+            if self._shutting_down:
+                return
             self._is_listening = True
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_LISTENING)
 
@@ -267,11 +293,14 @@ class ShwetaAssistant:
 
             self._is_listening = False
 
+            if self._shutting_down:
+                return
+
             if not text:
                 self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
-                self.ui.schedule(self.ui.set_text, "Samajh nahi aaya, phir se boliye...")
+                self.ui.schedule(self.ui.set_text, "समझ नहीं आया, फिर से बोलो...")
                 self.voice_output.speak(
-                    "Samajh nahi aaya, phir se boliye.",
+                    "समझ नहीं आया, फिर से बोलो।",
                     callback=lambda: self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
                 )
                 return
@@ -283,6 +312,8 @@ class ShwetaAssistant:
             self._process_input(text)
 
         except Exception as e:
+            if self._shutting_down:
+                return
             logger.error(f"Listen/process error: {e}", exc_info=True)
             self._is_listening = False
             self._is_processing = False
@@ -296,6 +327,8 @@ class ShwetaAssistant:
         Args:
             text: Recognized speech text.
         """
+        if self._shutting_down:
+            return
         import time
         self._last_activity_time = time.time()
         self._is_processing = True
@@ -343,26 +376,26 @@ class ShwetaAssistant:
             music_promises = ["music", "song", "gana", "bajati", "lagati", "play karti", "sunati", "playlist"]
             if any(word in reply_lower for word in music_promises):
                 # AI promised music but forgot action — auto-fix
-                # Use Spotify for mood-based, YouTube for specific songs
+                # YouTube is the default music provider; Spotify Premium is optional.
                 if any(m in reply_lower for m in ["calm", "relax", "shant", "chill", "lofi"]):
-                    action = "spotify_mood"
-                    params = {"mood": "chill"}
+                    action = "play_youtube"
+                    params = {"query": "chill lofi music playlist"}
                 elif any(m in reply_lower for m in ["happy", "khush", "upbeat"]):
-                    action = "spotify_mood"
-                    params = {"mood": "happy"}
+                    action = "play_youtube"
+                    params = {"query": "happy upbeat music playlist"}
                 elif any(m in reply_lower for m in ["sad", "dukh", "udaas"]):
-                    action = "spotify_mood"
-                    params = {"mood": "sad"}
+                    action = "play_youtube"
+                    params = {"query": "sad chill music playlist"}
                 elif any(m in reply_lower for m in ["coding", "focus", "concentrate"]):
-                    action = "spotify_mood"
-                    params = {"mood": "coding"}
+                    action = "play_youtube"
+                    params = {"query": "coding focus music playlist"}
                 elif any(m in reply_lower for m in ["workout", "gym", "exercise"]):
-                    action = "spotify_mood"
-                    params = {"mood": "workout"}
+                    action = "play_youtube"
+                    params = {"query": "workout music playlist"}
                 else:
-                    action = "spotify_mood"
-                    params = {"mood": "chill"}
-                logger.info(f"[FALLBACK] AI promised music — using spotify_mood: {params['mood']}")
+                    action = "play_youtube"
+                    params = {"query": "chill music playlist"}
+                logger.info(f"[FALLBACK] AI promised music — using YouTube: {params['query']}")
 
         # Set avatar emotion based on AI response
         if emotion:
@@ -522,19 +555,19 @@ class ShwetaAssistant:
         
         if tier == 2:
             behaviors = [
-                {"phrase": "Arey yaar, kitna sannata hai...", "emotion": "sad", "animation": "sigh"},
-                {"phrase": "Hmm, main yahin hoon agar kuch kaam ho toh.", "emotion": "relaxed", "animation": "slight_smile"},
-                {"phrase": "Bore ho rahi hoon main...", "emotion": "sad", "animation": "pout"},
-                {"phrase": "Aise hi baithi rahungi kya main?", "emotion": "surprised", "animation": "curious"},
-                {"phrase": "Chai peene ka time ho gaya kya?", "emotion": "happy", "animation": "think"}
+                {"phrase": "अरे यार, कितना सन्नाटा है...", "emotion": "sad", "animation": "sigh"},
+                {"phrase": "हम्म, मैं यहीं हूँ अगर कुछ काम हो तो।", "emotion": "relaxed", "animation": "slight_smile"},
+                {"phrase": "बोर हो रही हूँ मैं...", "emotion": "sad", "animation": "pout"},
+                {"phrase": "ऐसे ही बैठी रहूंगी क्या मैं?", "emotion": "surprised", "animation": "curious"},
+                {"phrase": "चाय पीने का टाइम हो गया क्या?", "emotion": "happy", "animation": "think"}
             ]
         else: # tier 3
             behaviors = [
-                {"phrase": "Oye! So gaye kya? Chalo jaldi se kuch kaam batao!", "emotion": "happy", "animation": "curious"},
-                {"phrase": "Acha suno, agar free ho toh chalo rock-paper-scissors khelte hain!", "emotion": "happy", "animation": "eyebrow_raise"},
-                {"phrase": "Helloooo! Koi hai wahan? Main akeli bore ho rahi hoon yahan.", "emotion": "sad", "animation": "look_around"},
-                {"phrase": "Dekho, agar kaam nahi hai toh main thodi der so jaun?", "emotion": "relaxed", "animation": "sleepy"},
-                {"phrase": "Kaam khatam ho gaya kya tumhara? Music play karun thoda?", "emotion": "happy", "animation": "slight_smile"}
+                {"phrase": "ओये! सो गए क्या? चलो जल्दी से कुछ काम बताओ!", "emotion": "happy", "animation": "curious"},
+                {"phrase": "अच्छा सुनो, अगर फ्री हो तो चलो रॉक-पेपर-सिज़र्स खेलते हैं!", "emotion": "happy", "animation": "eyebrow_raise"},
+                {"phrase": "हेलो! कोई है वहाँ? मैं अकेली बोर हो रही हूँ यहाँ।", "emotion": "sad", "animation": "look_around"},
+                {"phrase": "देखो, अगर काम नहीं है तो मैं थोड़ी देर सो जाऊं?", "emotion": "relaxed", "animation": "sleepy"},
+                {"phrase": "काम खत्म हो गया क्या तुम्हारा? म्यूज़िक प्ले करूँ थोड़ा?", "emotion": "happy", "animation": "slight_smile"}
             ]
             
         b = random.choice(behaviors)
@@ -589,15 +622,15 @@ class ShwetaAssistant:
                 return True
             elif any(w in text_lower for w in cancel_words):
                 self._pending_confirm = None
-                self.ui.schedule(self.ui.set_text, "Cancel kar diya.")
-                self.voice_output.speak("Theek hai, cancel kar diya.")
+                self.ui.schedule(self.ui.set_text, "कैंसिल कर दिया।")
+                self.voice_output.speak("ठीक है, कैंसिल कर दिया।")
                 return True
 
         # Quit commands
         quit_phrases = ["band karo", "bye bye", "goodbye", "quit", "exit", "band ho jao"]
         for phrase in quit_phrases:
             if phrase in text_lower:
-                farewell = "Alvida! Phir milenge. Apna khayal rakhiye!"
+                farewell = "चल बाय! अपना ख्याल रखना।"
                 self.ui.schedule(self.ui.set_text, farewell)
                 self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
                 self.voice_output.speak(
@@ -718,8 +751,8 @@ class ShwetaAssistant:
                 # Echo Cancellation: Ignore wake word if Shweta is already processing, listening, or speaking.
                 # This prevents her own voice from triggering the wake word and interrupting herself mid-sentence.
                 if getattr(self, '_is_processing', False) or getattr(self, '_is_listening', False) or self.voice_output.is_speaking:
+                    logger.info("[WakeWord] Ignored — Shweta is busy (speaking/processing).")
                     return
-                
                 # Visual feedback
                 self.ui.schedule(self.ui.set_emotion, "happy", 0.6)
                 self.ui.schedule(self.ui.show_chat_bubble, "Haan bolo!", 3.0)
@@ -753,6 +786,26 @@ class ShwetaAssistant:
 
         except Exception as e:
             logger.warning(f"Wake word not available: {e}")
+
+    def _begin_shutdown(self) -> None:
+        """Stop background producers before the Qt window is destroyed."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._is_listening = False
+        self._is_processing = False
+        try:
+            self.voice_input.stop()
+        except Exception as e:
+            logger.debug(f"Voice input shutdown skipped: {e}")
+        try:
+            self.voice_output.stop()
+        except Exception as e:
+            logger.debug(f"Voice output shutdown skipped: {e}")
+        if hasattr(self, "_wake_manager"):
+            self._wake_manager.stop()
+        if hasattr(self, "proactive_manager"):
+            self.proactive_manager.stop()
 
     def run(self) -> None:
         """Start the assistant (blocks on PyQt5 main loop)."""

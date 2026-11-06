@@ -214,6 +214,8 @@ def open_app(app_name: str) -> Dict[str, str]:
             "maps": "bingmaps:",
             "mail": "outlookmail:",
             "calendar": "outlookcal:",
+            "whatsapp": "whatsapp:",
+            "whats app": "whatsapp:",
         }
 
         # Check if we have a known mapping

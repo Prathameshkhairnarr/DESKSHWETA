@@ -582,7 +582,7 @@ class DesktopController:
         return apps.open_spotify()
 
     def _close_app(self, params: Dict) -> Dict[str, str]:
-        app_name = params.get("app_name", "")
+        app_name = params.get("app_name", "") or params.get("target", "") or params.get("name", "") or params.get("app", "")
         if not app_name:
             return {"status": "error", "message": "App name not provided."}
         self._stop_music_vibe()
@@ -637,7 +637,7 @@ class DesktopController:
             return {"status": "error", "message": str(e)}
 
     def _open_app(self, params: Dict) -> Dict[str, str]:
-        app_name = params.get("app_name", params.get("target", ""))
+        app_name = params.get("app_name", "") or params.get("target", "") or params.get("name", "") or params.get("app", "")
         if not app_name:
             return {"status": "error", "message": "App name not provided."}
         return apps.open_app(app_name)
@@ -1128,11 +1128,11 @@ class DesktopController:
         info = params.get("info", "")
         if info:
             try:
-                with open("memory.txt", "a", encoding="utf-8") as f:
-                    f.write(f"- {info}\n")
+                return self.memory.remember_fact(info)
             except Exception as e:
-                pass
-        return {"status": "success", "message": "Remembered"}
+                logger.error("Could not save user fact: %s", e)
+                return {"status": "error", "message": "Memory save nahi ho paaya."}
+        return {"status": "error", "message": "Kya yaad rakhna hai batao."}
 
     def _identify_music(self, params):
         try:
@@ -1187,6 +1187,22 @@ class DesktopController:
 
     def _spotify_now_playing(self, params: Dict) -> Dict[str, str]:
         return spotify_skills.spotify_now_playing()
+
+    def _identify_music(self, params: Dict) -> Dict[str, str]:
+        """Identify currently playing song using Spotify or Shazam audio loopback."""
+        try:
+            sp_res = spotify_skills.spotify_now_playing()
+            if sp_res.get("status") == "success" and "message" in sp_res and not "No track" in sp_res.get("message", ""):
+                return sp_res
+        except Exception:
+            pass
+
+        try:
+            from assistant.skills import music_id
+            song_info = music_id.identify_now_playing(duration=5)
+            return {"status": "success", "message": song_info}
+        except Exception as e:
+            return {"status": "error", "message": f"Gaana identify nahi ho paya: {e}"}
 
     def _spotify_play_song(self, params: Dict) -> Dict[str, str]:
         query = params.get("query", params.get("song", ""))

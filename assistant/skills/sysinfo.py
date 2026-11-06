@@ -72,7 +72,7 @@ def get_storage() -> Dict[str, str]:
 def get_cpu_usage() -> Dict[str, str]:
     """Get CPU usage."""
     try:
-        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_percent = psutil.cpu_percent(interval=0.05)
         cpu_count = psutil.cpu_count()
         msg = f"CPU {cpu_percent}% use ho raha hai ({cpu_count} cores)."
         return {"status": "success", "message": msg}

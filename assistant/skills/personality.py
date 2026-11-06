@@ -75,6 +75,7 @@ class MemoryStore:
             "city": "",
             "favorite_songs": [],
             "preferred_language": "hinglish",
+            "facts": [],
         }
         self._load()
 
@@ -119,10 +120,25 @@ class MemoryStore:
             parts.append(f"Favorite songs: {songs}")
         if self.data.get("preferred_language"):
             parts.append(f"Preferred language: {self.data['preferred_language']}")
+        facts = self.data.get("facts", [])
+        if facts:
+            parts.append("Important user facts: " + "; ".join(facts[-10:]))
         return "\n".join(parts) if parts else ""
 
     def remember(self, key: str, value: str) -> Dict[str, str]:
         return self.set(key, value)
+
+    def remember_fact(self, fact: str) -> Dict[str, str]:
+        """Persist a free-form fact without forcing it into a fake key/value pair."""
+        fact = str(fact).strip()
+        if not fact:
+            return {"status": "error", "message": "Fact empty hai."}
+        facts = self.data.setdefault("facts", [])
+        if fact not in facts:
+            facts.append(fact)
+            self.data["facts"] = facts[-50:]
+            self._save()
+        return {"status": "success", "message": "Haan, yaad rakh liya."}
 
     def get_all(self) -> Dict[str, str]:
         return {"status": "success", "message": json.dumps(self.data, ensure_ascii=False)}

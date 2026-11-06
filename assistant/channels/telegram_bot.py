@@ -272,12 +272,18 @@ class ShwetaTelegramBot:
                                      "empty_recycle_bin", "lock_screen"]
 
         try:
-            # Check if file request
-            file_keywords = ["bhejo", "send", "file chahiye", "dhundo file",
+            # Check if file request (send from PC to phone)
+            file_send_keywords = ["bhejo", "send", "file chahiye", "dhundo file",
                              "mujhe chahiye", "share karo", "file bhej",
-                             "file send", "bhej do", "de do file",
-                             ".txt", ".pdf", ".docx", ".xlsx", ".jpg", ".png", ".mp3", ".mp4", ".zip"]
-            if any(kw in text.lower() for kw in file_keywords):
+                             "file send", "bhej do", "de do file"]
+            file_ext_keywords = [".txt", ".pdf", ".docx", ".xlsx", ".jpg", ".png", ".mp3", ".mp4", ".zip"]
+            # Make sure it's a "send file" request, NOT a "create file" request
+            create_keywords = ["create", "bana", "banao", "likh", "likho", "make", "generate"]
+            text_lower = text.lower()
+            is_create_request = any(kw in text_lower for kw in create_keywords)
+            is_send_request = (any(kw in text_lower for kw in file_send_keywords) or
+                              any(kw in text_lower for kw in file_ext_keywords))
+            if is_send_request and not is_create_request:
                 await self._file_request(update, context, text)
                 return
 

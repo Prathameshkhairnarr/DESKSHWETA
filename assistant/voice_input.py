@@ -116,18 +116,35 @@ class VoiceInput:
         self.is_available: bool = False
         self._listen_lock = threading.Lock()
         self._is_listening: bool = False
+        self._stop_event = threading.Event()
+        self._stream_lock = threading.Lock()
+        self._active_stream = None
         self.last_error: Optional[str] = None
         self._init()
+
+    def stop(self) -> None:
+        """Stop an active recording so the application can close cleanly."""
+        self._stop_event.set()
+        with self._stream_lock:
+            stream = self._active_stream
+        if stream is not None:
+            try:
+                stream.stop()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
 
     def _init(self) -> None:
         """Check mic availability. VAD loaded lazily on first listen()."""
         try:
+            # Always query the CURRENT default input device (handles headphone plug/unplug)
             info = sd.query_devices(kind="input")
             if info:
                 self.is_available = True
                 logger.info(f"Microphone ready: {info['name']}")
-                # NOTE: VAD model NOT loaded here (lazy load on first listen)
-                # This saves ~2s startup time and ~200MB RAM until needed
             else:
                 self.is_available = False
                 self.last_error = ERROR_MESSAGES["mic_not_found"]
@@ -140,6 +157,14 @@ class VoiceInput:
             self.is_available = False
             self.last_error = ERROR_MESSAGES["mic_not_found"]
             logger.warning(f"Mic init failed: {e}")
+
+    def refresh_device(self) -> None:
+        """
+        Re-query available audio input devices. Call this when you suspect
+        the audio device changed (headphone plugged/unplugged) or before
+        each listen() cycle to always pick the current OS default mic.
+        """
+        self._init()
 
     def listen(self, on_listening: Optional[Callable] = None,
                on_processing: Optional[Callable] = None) -> Optional[str]:
@@ -159,6 +184,7 @@ class VoiceInput:
             return None
 
         try:
+            self._stop_event.clear()
             return self._listen_impl(on_listening, on_processing)
         finally:
             self._is_listening = False
@@ -166,9 +192,15 @@ class VoiceInput:
 
     def _listen_impl(self, on_listening, on_processing) -> Optional[str]:
         """Internal listen implementation (lock already held)."""
+        # Re-check device availability (handles headphone/mic plug/unplug between calls)
+        self._init()
+
         if not self.is_available:
             self.last_error = ERROR_MESSAGES["mic_not_found"]
             logger.warning("Mic not available.")
+            return None
+
+        if self._stop_event.is_set():
             return None
 
         # Lazy load VAD model on first use
@@ -252,6 +284,8 @@ class VoiceInput:
                 blocksize=CHUNK_SAMPLES,
             )
             stream.start()
+            with self._stream_lock:
+                self._active_stream = stream
         except sd.PortAudioError as e:
             if "out of range" in str(e) or "-9999" in str(e) or "Invalid device" in str(e):
                 logger.warning("PortAudio device list stale (Bluetooth hotplug?). Re-initializing sounddevice...")
@@ -289,6 +323,9 @@ class VoiceInput:
 
         try:
             while True:
+                if self._stop_event.is_set():
+                    logger.info("Recording stopped by application shutdown.")
+                    return None
                 elapsed = time.time() - record_start
 
                 # Hard cap on total recording time
@@ -300,7 +337,8 @@ class VoiceInput:
                 try:
                     chunk, overflowed = stream.read(CHUNK_SAMPLES)
                 except Exception as e:
-                    logger.warning(f"Mic read error: {e}")
+                    if not self._stop_event.is_set():
+                        logger.warning(f"Mic read error: {e}")
                     break
 
                 if overflowed:
@@ -343,6 +381,8 @@ class VoiceInput:
                             break
 
         finally:
+            with self._stream_lock:
+                self._active_stream = None
             # GUARANTEED mic stream cleanup
             try:
                 stream.stop()

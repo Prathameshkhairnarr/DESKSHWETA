@@ -22,7 +22,30 @@ COOLDOWN = 2.5         # Seconds between detections
 SILENCE_RMS = 300      # Minimum RMS to bother with STT (int16 scale)
 
 # Wake word triggers — if ANY of these appear in STT output, activate
-TRIGGERS = ["shweta", "schweta", "shveta", "swetha", "sweta", "hey shweta", "oye shweta", "sun shweta"]
+# The small en-IN Vosk model does not contain the name "shweta" in its
+# vocabulary.  In practice it decodes the spoken name as "sweater", so keep
+# that pronunciation as an intentional wake-word alias.
+TRIGGERS = [
+    "shweta", "schweta", "shveta", "swetha", "sweta",
+    "sweater", "hey shweta", "hey sweater", "hello shweta",
+    "hello sweater", "hi shweta", "hi sweater", "yo shweta", "yo sweater",
+    "oye shweta", "sun shweta",
+]
+
+PARTIAL_TRIGGERS = {"hey shweta", "hey sweater"}
+
+
+def _is_wake_trigger(text: str, partial: bool = False) -> bool:
+    """Return whether Vosk text contains a known Shweta pronunciation."""
+    normalized = " ".join((text or "").lower().split())
+    if partial:
+        # Partial Vosk results are noisy. Only accept the complete two-word
+        # phrase here; a standalone "sweater" is checked after finalization.
+        return normalized in PARTIAL_TRIGGERS
+
+    # Final results must be the wake word itself, not an arbitrary sentence
+    # that happens to contain the model's "sweater" approximation.
+    return normalized in TRIGGERS
 
 
 def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigger_callback: Callable) -> None:
@@ -55,7 +78,9 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
     try:
         model = Model(model_path)
         # By providing a grammar, Vosk becomes a highly accurate, zero-shot wake word detector!
-        grammar = '["hey shweta", "hello shweta", "hi shweta", "yo shweta", "shweta", "[unk]"]'
+        # "shweta" is not in this model's vocabulary.  "sweater" is the
+        # closest reliable decoding for the user's pronunciation.
+        grammar = '["hey sweater", "hello sweater", "hi sweater", "yo sweater", "sweater", "[unk]"]'
         rec = KaldiRecognizer(model, 16000, grammar)
     except Exception as e:
         print(f"[WakeWord] Failed to load Vosk model: {e}")
@@ -86,7 +111,14 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
                     print(f"[WakeWord] Selected safe fallback device index: {device_index} ({d['name']})")
                     break
         
-        # If device_index is None, sd.RawInputStream will use the default system input device
+        # Resolve the current default explicitly. This avoids accidentally
+        # opening a virtual/output device when Windows changes the default.
+        if device_index is None:
+            default_input = sd.query_devices(kind="input")
+            if default_input:
+                device_index = default_input["index"]
+                print(f"[WakeWord] Using default microphone: '{default_input['name']}' (index {device_index})", flush=True)
+
         stream = sd.RawInputStream(samplerate=16000, blocksize=4000, device=device_index, dtype='int16', channels=1)
     except Exception as e:
         print(f"[WakeWord] sounddevice failed to open stream: {e}", flush=True)
@@ -96,10 +128,55 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
 
     print("[WakeWord] Listening for 'Hey Shweta' offline...", flush=True)
 
-    with stream:
-        stream.start()
+    # Track the current default input device to detect headphone/mic changes
+    def _get_default_input_name():
+        try:
+            info = sd.query_devices(kind="input")
+            return info['name'] if info else ""
+        except Exception:
+            return ""
+
+    current_device_name = _get_default_input_name()
+    device_check_interval = 3.0  # Check for device changes every 3 seconds
+    last_device_check = time.time()
+
+    stream.start()
+    try:
         while not stop_event.is_set():
             try:
+                # Periodically check if audio device changed (headphone plug/unplug)
+                now = time.time()
+                if now - last_device_check > device_check_interval:
+                    last_device_check = now
+                    new_device_name = _get_default_input_name()
+                    if new_device_name and new_device_name != current_device_name:
+                        print(f"[WakeWord] Audio device changed: '{current_device_name}' -> '{new_device_name}'. Restarting stream...", flush=True)
+                        current_device_name = new_device_name
+                        # Close old stream and open new one on the new default device
+                        try:
+                            stream.stop()
+                            stream.close()
+                        except Exception:
+                            pass
+                        try:
+                            new_device = sd.query_devices(kind="input")
+                            new_device_index = new_device["index"] if new_device else None
+                            stream = sd.RawInputStream(
+                                samplerate=16000,
+                                blocksize=4000,
+                                device=new_device_index,
+                                dtype='int16',
+                                channels=1,
+                            )
+                            stream.start()
+                            print(f"[WakeWord] Switched to: '{new_device_name}'", flush=True)
+                        except Exception as e:
+                            print(f"[WakeWord] Failed to reopen stream on new device: {e}", flush=True)
+                            time.sleep(5)
+                            return
+                        rec.Reset()
+                        continue
+
                 data, overflowed = stream.read(4000)
                 data_bytes = bytes(data)
                 
@@ -113,21 +190,30 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
                     text = res.get("text", "").lower()
                     if text:
                         # Only print if it heard something substantial to avoid spam
-                        if any(t in text for t in TRIGGERS):
+                        if _is_wake_trigger(text):
                             logger.info(f"[WakeWord] 🎯 DETECTED! Heard: '{text}'")
                             last_detection = time.time()
                             trigger_callback()
                 else:
                     partial = json.loads(rec.PartialResult())
                     text = partial.get("partial", "").lower()
-                    if any(t in text for t in TRIGGERS):
+                    if _is_wake_trigger(text, partial=True):
                         logger.info(f"[WakeWord] 🎯 DETECTED (Partial)! Heard: '{text}'")
                         last_detection = time.time()
                         trigger_callback()
                         # reset recognizer to avoid double trigger
                         rec.Reset()
             except Exception as e:
-                pass
+                # Keep the listener alive, but make device/read failures
+                # visible in the log instead of silently disabling wake word.
+                logger.debug(f"[WakeWord] Audio loop error: {e}")
+    finally:
+        # Cleanup stream on exit (stop_event set or return)
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass
 
 
 class WakeWordManager:

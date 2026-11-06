@@ -66,7 +66,8 @@ class AvatarWindow(QMainWindow):
     # Qt signal for thread-safe UI updates from background threads
     _schedule_signal = pyqtSignal(object, tuple)
 
-    def __init__(self, on_mic_click: Optional[Callable] = None, on_quick_action: Optional[Callable] = None) -> None:
+    def __init__(self, on_mic_click: Optional[Callable] = None, on_quick_action: Optional[Callable] = None,
+                 on_close: Optional[Callable] = None) -> None:
         # Create QApplication if not already running
         self._app = QApplication.instance()
         if self._app is None:
@@ -76,6 +77,8 @@ class AvatarWindow(QMainWindow):
 
         self.on_mic_click = on_mic_click
         self._on_quick_action = on_quick_action
+        self._on_close = on_close
+        self._is_closing = False
         self.state = self.STATE_IDLE
 
         # Connect schedule signal (thread-safe cross-thread calls)
@@ -251,7 +254,13 @@ class AvatarWindow(QMainWindow):
         Thread-safe: schedule a function to run on the main Qt thread.
         Replaces Tkinter's root.after(0, func, *args).
         """
-        self._schedule_signal.emit(func, args)
+        if self._is_closing:
+            return
+        try:
+            self._schedule_signal.emit(func, args)
+        except RuntimeError:
+            # Background workers can finish while Qt is shutting down.
+            pass
 
     def run(self) -> None:
         """Start the Qt event loop (blocks like Tkinter mainloop)."""
@@ -313,6 +322,8 @@ class AvatarWindow(QMainWindow):
 
     def _run_js(self, code: str) -> None:
         """Run JavaScript in the WebEngine (thread-safe via QTimer)."""
+        if self._is_closing:
+            return
         QTimer.singleShot(0, lambda: self.web.page().runJavaScript(code))
 
     def _on_title_change(self, title):
@@ -345,6 +356,14 @@ class AvatarWindow(QMainWindow):
 
     def _close(self) -> None:
         """Close the window and quit the app."""
+        if self._is_closing:
+            return
+        self._is_closing = True
+        if self._on_close:
+            try:
+                self._on_close()
+            except Exception as e:
+                logger.warning(f"Close callback failed: {e}")
         try:
             self._app.quit()
         except Exception:

@@ -366,14 +366,15 @@ def search_file(name: str, location: str = "") -> Dict[str, str]:
             if not _is_safe_path(loc_path):
                 return {"status": "error", "message": "Access Denied: Search location home folder ke bahar hai."}
             search_path = location
+            ps_cmd = f'Get-ChildItem -Path "{search_path}" -Recurse -Depth 4 -Filter "*{name}*" -ErrorAction SilentlyContinue | Select-Object -First 10 -ExpandProperty FullName'
         else:
-            search_path = str(HOME)
+            # Prioritize fast lookup in primary user folders (Desktop, Documents, Downloads)
+            search_dirs = f"'{DESKTOP}', '{DOCUMENTS}', '{DOWNLOADS}'"
+            ps_cmd = f'Get-ChildItem -Path {search_dirs} -Recurse -Depth 3 -Filter "*{name}*" -ErrorAction SilentlyContinue | Select-Object -First 10 -ExpandProperty FullName'
 
-        # Use PowerShell for fast recursive search
-        ps_cmd = f'Get-ChildItem -Path "{search_path}" -Recurse -Filter "*{name}*" -ErrorAction SilentlyContinue | Select-Object -First 10 -ExpandProperty FullName'
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_cmd],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=10
         )
 
         if result.stdout.strip():
@@ -454,3 +455,67 @@ def search_and_open(name: str) -> Dict[str, str]:
             return {"status": "error", "message": str(e)}
     else:
         return result
+
+
+def compress_folder(folder_path: str) -> Dict[str, str]:
+    """
+    Compress a folder into a ZIP file.
+
+    Args:
+        folder_path: Path to the folder to compress.
+    """
+    try:
+        import zipfile
+
+        target = _resolve_path(folder_path)
+        if not _is_safe_path(target):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
+
+        if not target.exists() or not target.is_dir():
+            return {"status": "error", "message": f"Folder '{folder_path}' nahi mila."}
+
+        zip_path = target.parent / f"{target.name}.zip"
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in target.rglob('*'):
+                if file.is_file():
+                    zipf.write(file, file.relative_to(target.parent))
+
+        size_mb = zip_path.stat().st_size / (1024 * 1024)
+        return {"status": "success", "message": f"Zip ban gayi: {zip_path.name} ({size_mb:.1f}MB)"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def extract_zip(zip_path: str, extract_to: str = None) -> Dict[str, str]:
+    """
+    Extract a ZIP file.
+
+    Args:
+        zip_path: Path to the ZIP file.
+        extract_to: Optional destination folder.
+    """
+    try:
+        import zipfile
+
+        src = _resolve_path(zip_path)
+        if not _is_safe_path(src):
+            return {"status": "error", "message": "Access Denied: Path home folder ke bahar hai."}
+
+        if not src.exists():
+            return {"status": "error", "message": f"ZIP file '{zip_path}' nahi mili."}
+
+        if extract_to:
+            dest = Path(extract_to) if Path(extract_to).is_absolute() else DESKTOP / extract_to
+        else:
+            dest = src.parent / src.stem
+
+        if not _is_safe_path(dest):
+            return {"status": "error", "message": "Access Denied: Destination home folder ke bahar hai."}
+
+        dest.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(src, 'r') as zipf:
+            zipf.extractall(dest)
+
+        return {"status": "success", "message": f"Extract ho gaya: {dest.name}/"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

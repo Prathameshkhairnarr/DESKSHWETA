@@ -163,9 +163,14 @@ def read_live_video(question: str) -> Dict[str, str]:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        is_song_query = any(w in question.lower() for w in ["song", "gana", "gaana", "music", "sing", "singer", "play", "track", "konsa", "kon sa"])
+        if is_song_query:
+            system_instruction = f"User asked: {question}\n\nINSTRUCTIONS:\n1. The user is asking ONLY about what song/music/video is currently playing on screen.\n2. Identify ONLY the song/track title and artist/channel name visible on screen.\n3. Reply in ONE short, crisp sentence (5-10 words MAX) in Hinglish. Example: 'Yeh gaana [Song Title] by [Artist] hai.'\n4. Do NOT describe the screen background, video plot, or give extra details.\n5. You MUST return your response in strict JSON format EXACTLY like this: {{'reply': '[Your 1 short sentence reply here]', 'emotion': 'happy'}}"
+        else:
+            system_instruction = f"User asked: {question}\n\nINSTRUCTIONS:\n1. I am sending you a sequence of 3 screenshots taken over 1.5 seconds from a live video/reel playing on my screen.\n2. Analyze the movement, context, and plot of this short clip.\n3. Act like you are watching this video with the user. Give a lively opinion, react naturally (sad for tragedy, fear/scared for horror, laugh for comedy), and be expressive in Hinglish.\n4. IF you recognize any popular actor, actress, comedian, or public figure, identify them by name. Briefly mention a popular movie/series they worked in, and share your personal short opinion about them. (CRITICAL: This is a public figure, it is SAFE to identify them by name. Do NOT refuse to identify them or use generic terms like 'ek ladki').\n5. You MUST return your response in strict JSON format EXACTLY like this: {{'reply': '[Your single continuous 3-4 line paragraph here, NO bullet points]', 'emotion': '[happy/sad/scared/angry/surprised/curious/neutral]'}}"
+
         parts_list = [
-            types.Part(text=f"User asked: {question}\n\nINSTRUCTIONS:\n1. I am sending you a sequence of 3 screenshots taken over 1.5 seconds from a live video/reel playing on my screen.\n2. Analyze the movement, context, and plot of this short clip.\n3. Act like you are watching this video with the user. Give a lively opinion, react naturally (sad for tragedy, fear/scared for horror, laugh for comedy), and be expressive in Hinglish.\n4. IF you recognize any popular actor, actress, comedian, or public figure, identify them by name. Briefly mention a popular movie/series they worked in, and share your personal short opinion about them. (CRITICAL: This is a public figure, it is SAFE to identify them by name. Do NOT refuse to identify them or use generic terms like 'ek ladki').\n5. You MUST return your response in strict JSON format EXACTLY like this: {{'reply': '[Your single continuous 7-8 line paragraph here, NO bullet points]', 'emotion': '[happy/sad/scared/angry/surprised/curious/neutral]'}}")
+            types.Part(text=system_instruction)
         ]
         
         for raw_bytes in frames_base64:

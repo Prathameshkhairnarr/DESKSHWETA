@@ -281,7 +281,6 @@ def parse_ai_response(text: str) -> Dict[str, Any]:
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError:
-            # Try fixing common issues: single quotes, trailing commas
             try:
                 fixed = json_str.replace("'", '"')
                 fixed = re.sub(r',\s*}', '}', fixed)
@@ -290,15 +289,43 @@ def parse_ai_response(text: str) -> Dict[str, Any]:
             except json.JSONDecodeError:
                 pass
 
+    action = "none"
+    params = {}
+    reply = ""
+    emotion = ""
+
+    # Check if action name is prefixed before '{', e.g., "send_whatsapp_by_name{"name":"Aryan","message":"Hay"}"
+    if start > 0:
+        prefix_action = cleaned[:start].strip()
+        matched = _fuzzy_action_match(prefix_action) or (prefix_action if prefix_action in KNOWN_ACTIONS else None)
+        if matched:
+            action = matched
+            params = data if isinstance(data, dict) else {}
+            if "reply" in params:
+                reply = str(params.pop("reply"))
+            logger.info(f"[Parse] Extracted prefixed action '{action}' with params: {params}")
+
+    if isinstance(data, dict):
+        if action == "none":
+            action = data.get("action", "none") or "none"
+        if not params:
+            params = data.get("params", {})
+        if not reply:
+            reply = data.get("reply", "")
+        if not emotion:
+            emotion = data.get("emotion", "")
+
     # If JSON parse failed entirely, try regex extraction
-    if data is None or not isinstance(data, dict):
+    if data is None and action == "none":
         return _regex_extract(text)
 
-    # Extract fields with type safety
-    action = data.get("action", "none") or "none"
-    params = data.get("params", {})
-    reply = data.get("reply", "")
-    emotion = data.get("emotion", "")
+    # Auto-generate reply if action is valid but reply is missing
+    if action != "none" and not reply:
+        if action in ("send_whatsapp_by_name", "send_whatsapp"):
+            target_name = params.get("name", params.get("phone", ""))
+            reply = f"'{target_name}' ko WhatsApp message bhej rahi hoon." if target_name else "WhatsApp message bhej rahi hoon."
+        else:
+            reply = f"{action.replace('_', ' ').capitalize()} kar rahi hu."
 
     # Type coercion
     if not isinstance(action, str):

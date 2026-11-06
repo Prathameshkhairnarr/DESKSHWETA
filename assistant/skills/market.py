@@ -63,18 +63,20 @@ def get_stock_market() -> Dict[str, str]:
         resp = requests.get(url, headers=headers, timeout=8)
         nifty_data = resp.json()
 
-        nifty_price = nifty_data["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        nifty_prev = nifty_data["chart"]["result"][0]["meta"]["previousClose"]
-        nifty_change = ((nifty_price - nifty_prev) / nifty_prev) * 100
+        meta1 = nifty_data["chart"]["result"][0]["meta"]
+        nifty_price = meta1.get("regularMarketPrice") or meta1.get("chartPreviousClose", 0)
+        nifty_prev = meta1.get("chartPreviousClose") or meta1.get("previousClose") or nifty_price
+        nifty_change = ((nifty_price - nifty_prev) / nifty_prev) * 100 if nifty_prev else 0
 
         # Sensex
         url2 = "https://query1.finance.yahoo.com/v8/finance/chart/%5EBSESN?interval=1d&range=1d"
         resp2 = requests.get(url2, headers=headers, timeout=8)
         sensex_data = resp2.json()
 
-        sensex_price = sensex_data["chart"]["result"][0]["meta"]["regularMarketPrice"]
-        sensex_prev = sensex_data["chart"]["result"][0]["meta"]["previousClose"]
-        sensex_change = ((sensex_price - sensex_prev) / sensex_prev) * 100
+        meta2 = sensex_data["chart"]["result"][0]["meta"]
+        sensex_price = meta2.get("regularMarketPrice") or meta2.get("chartPreviousClose", 0)
+        sensex_prev = meta2.get("chartPreviousClose") or meta2.get("previousClose") or sensex_price
+        sensex_change = ((sensex_price - sensex_prev) / sensex_prev) * 100 if sensex_prev else 0
 
         n_dir = "📈" if nifty_change > 0 else "📉"
         s_dir = "📈" if sensex_change > 0 else "📉"

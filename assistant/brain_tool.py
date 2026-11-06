@@ -141,6 +141,20 @@ class ToolBrain:
             {
                 "type": "function",
                 "function": {
+                    "name": "identify_music",
+                    "description": "Identify what song/music is currently playing on the screen or audio output. ALWAYS use this when user asks 'konsa gana play hora hai', 'which song is playing', 'gaane ka naam kya hai'. Returns ONLY the exact song title and artist.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "spoken_reply": {"type": "string", "description": "Conversational Hinglish reply to say to the user while checking the song."}
+                        },
+                        "required": ["spoken_reply"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "react_to_screen",
                     "description": "Capture the current screen (video/reel/image/webpage) and answer a visual question. DO NOT use this tool if the user is asking to identify a song or music playing in a video; use identify_music for that instead.",
                     "parameters": {

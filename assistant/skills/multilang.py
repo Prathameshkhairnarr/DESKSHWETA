@@ -22,8 +22,8 @@ VOICES = {
 
 # AI language instructions (appended to system prompt dynamically)
 LANG_PROMPTS = {
-    "hindi": "User is speaking Hindi. Reply in Hindi (Devanagari script). Be natural and friendly.",
-    "hinglish": "User is speaking Hinglish. Reply in Hinglish (Hindi words in Roman/English script). Mix Hindi-English naturally.",
+    "hindi": "User is speaking Hindi. Reply in warm, natural conversational Hindi (हिंदी Devanagari script). Be friendly and expressive.",
+    "hinglish": "Reply in natural conversational Hindi (हिंदी Devanagari script). Be friendly and expressive.",
     "english": "User is speaking English. Reply in simple, friendly English.",
     "marathi": "User is speaking Marathi. Reply in Marathi (Devanagari script). Use casual friendly Marathi like a young Maharashtrian friend.",
     "tamil": "User is speaking Tamil. Reply in Tamil script. Use casual Tamil.",
@@ -162,8 +162,8 @@ class LanguageManager:
     """Manages language switching for voice + AI responses."""
 
     def __init__(self) -> None:
-        self.current_lang: str = "hinglish"
-        self._auto_mode: bool = False  # OFF by default — Hinglish fixed
+        self.current_lang: str = "hindi"
+        self._auto_mode: bool = False  # OFF by default — Hindi fixed
 
     def set_language(self, lang: str) -> Dict[str, str]:
         """Manually switch language (disables auto-detect)."""
