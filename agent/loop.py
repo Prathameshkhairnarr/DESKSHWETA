@@ -110,7 +110,7 @@ class AgentLoop:
             event_type=EventType.PLAN_CREATED,
             task_id=task.task_id,
             message=f"Task shuru: {task.goal[:60]}",
-            spoken="Kaam shuru karte hain.",
+            spoken="",  # orchestrator already announced; don't double-speak
             emotion="think",
         ))
 
@@ -127,6 +127,7 @@ class AgentLoop:
         # Scratchpad: accumulate observations
         scratchpad: List[str] = []
         previous_calls: List[tuple] = []  # (tool_name, params_hash) — dedup guard
+        _last_narration_time: float = 0.0  # debounce step narration
 
         try:
             while task.steps_taken < task.max_steps:
@@ -186,9 +187,13 @@ class AgentLoop:
                     self._finish(task, "failed", msg, "sad")
                     return
 
-                # Narrate MEDIUM risk actions
+                # Narrate step — debounced (min 2.5s between spoken updates)
+                # so rapid steps don't interrupt each other
                 tool_spec = get_tool(action)
-                if tool_spec and tool_spec.risk_level == RiskLevel.MEDIUM and spoken:
+                now = time.time()
+                _can_narrate = (now - _last_narration_time) >= 2.5
+                if tool_spec and tool_spec.risk_level == RiskLevel.MEDIUM and spoken and _can_narrate:
+                    _last_narration_time = now
                     self._emit(AgentEvent(
                         event_type=EventType.VOICE_UPDATE,
                         task_id=task.task_id,
@@ -250,9 +255,12 @@ class AgentLoop:
                 if action in _OPEN_ACTIONS and tool_result.status == "success":
                     time.sleep(1.8)  # let app load and take focus before next step
 
-                # Emit step event
+                # Emit step event (spoken debounced — only narrate if 2.5s since last)
+                now = time.time()
+                _can_narrate = (now - _last_narration_time) >= 2.5
                 if tool_result.status == "success":
-                    if spoken:
+                    if spoken and _can_narrate:
+                        _last_narration_time = now
                         self._emit(AgentEvent(
                             event_type=EventType.STEP_DONE,
                             task_id=task.task_id,
@@ -315,12 +323,27 @@ class AgentLoop:
         logger.warning("[Loop] LLM returned non-JSON: %s", text[:100])
         return {"action": "done", "spoken": "Ho gaya!", "emotion": "happy", "params": {}, "thought": ""}
 
+    # Compact tool quick-reference — updated once at startup
+    _TOOL_REF: str = ""
+
+    @classmethod
+    def _build_tool_ref(cls) -> str:
+        if cls._TOOL_REF:
+            return cls._TOOL_REF
+        tools = all_tools()
+        lines = ["Available tools (use EXACT name in \"action\" field):"]
+        for name, spec in tools.items():
+            lines.append(f"  {name}: {spec.description[:70]}")
+        cls._TOOL_REF = "\n".join(lines)
+        return cls._TOOL_REF
+
     def _build_context(self, goal: str, scratchpad: List[str], step: int) -> str:
         """Build the context message for the LLM at each step."""
         ctx = f"Goal: {goal}\n\nStep: {step + 1}\n"
         if scratchpad:
-            ctx += "\nHistory:\n" + "\n".join(scratchpad[-8:])  # last 8 steps
-        ctx += "\n\nWhat is the NEXT action?"
+            ctx += "\nHistory:\n" + "\n".join(scratchpad[-8:])
+        ctx += "\n\n" + self._build_tool_ref()
+        ctx += "\n\nReturn JSON for the NEXT action. Use only tool names from the list above."
         return ctx
 
     def _execute_tool(self, task: AgentTask, action: str, params: Dict) -> ToolResult:

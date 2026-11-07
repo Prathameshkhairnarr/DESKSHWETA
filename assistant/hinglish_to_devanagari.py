@@ -113,6 +113,17 @@ WORD_MAP = {
     "sahi": "सही", "galat": "गलत", "sach": "सच", "jhooth": "झूठ",
     "jaldi": "जल्दी", "dheere": "धीरे", "dheerey": "धीरे", "aaram": "आराम",
     "arre": "अरे", "arey": "अरे", "oye": "ओये", "wah": "वाह", "uff": "उफ़",
+    # Agent / common task words
+    "gadbad": "गड़बड़", "dikkat": "दिक्कत", "mushkil": "मुश्किल",
+    "koshish": "कोशिश", "samajh": "समझ", "pata": "पता", "maloom": "मालूम",
+    "zaroor": "ज़रूर", "bilkul": "बिल्कुल", "seedha": "सीधा", "seedhi": "सीधी",
+    "phir": "फिर", "dobara": "दोबारा", "warna": "वरना", "lekin": "लेकिन",
+    "isliye": "इसलिए", "kyunki": "क्योंकि", "taaki": "ताकि",
+    "shayad": "शायद", "lagta": "लगता", "lagti": "लगती", "lagbhag": "लगभग",
+    "zyada": "ज़्यादा", "kum": "कम", "thoda": "थोड़ा", "bahut": "बहुत",
+    "shukriya": "शुक्रिया", "hua": "हुआ", "hui": "हुई",
+    "likhna": "लिखना", "likha": "लिखा", "likhi": "लिखी",
+    "kholo": "खोलो", "kholna": "खोलना", "khola": "खोला",
 
     # ── Time & Temporal ──
     "aaj": "आज", "kal": "कल", "parso": "परसों", "tarso": "तरसों",
@@ -343,6 +354,11 @@ ENGLISH_WORDS = {
     "note", "notes", "memo", "list", "todo", "item", "items",
     "yes", "no", "true", "false", "bot", "assistant", "voice", "speech",
     "tradingview", "nvda", "laptop", "computer", "spec", "specs",
+    # Agent system / task words (must NOT be transliterated)
+    "complete", "completed", "failed", "success", "done", "task", "step",
+    "agent", "loop", "tool", "action", "result", "output", "input",
+    "research", "data", "fetch", "search", "query", "response",
+    "register", "execute", "running", "pending", "cancelled",
 
     # Conversational Indian English Words & Colloquialisms
     "actually", "basically", "seriously", "literally", "normally",

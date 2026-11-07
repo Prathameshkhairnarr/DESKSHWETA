@@ -239,10 +239,11 @@ class AgentOrchestrator:
             final = (updated.final_reply if updated else None) or "Kuch gadbad ho gayi."
             return self._reply(final, "sad", task_id=task.task_id)
         else:
-            # Multi-step: start async, give immediate spoken update
+            # Multi-step: start async background loop
+            # Give a SHORT acknowledgement (loop won't interrupt it — PLAN_CREATED has no spoken)
             self._loop.run(task)
             return self._reply(
-                "Theek hai, kaam shuru kar rahi hoon. Thodi der mein bataungi.",
+                "Theek hai, karte hain.",
                 "think",
                 task_id=task.task_id,
                 action="agent_task",
