@@ -344,8 +344,9 @@ class VoiceOutput:
                 return
             if self._murf_available and self._speak_murf(text):
                 return
-            if self._polly_available and self._speak_polly(text):
-                return
+            # Polly disabled (robotic) — skip to pyttsx3
+            # if self._polly_available and self._speak_polly(text):
+            #     return
             # Last resort fallback
             self._speak_pyttsx3(text)
         except Exception:
@@ -681,12 +682,12 @@ class VoiceOutput:
             cached_path = _is_cached(text)
             if cached_path:
                 self._play_with_lip_sync(str(cached_path))
-            # STEP 2: Murf (PRIMARY — cute Alia voice)
+            # STEP 2: Murf Falcon 2.1 (PRIMARY — Pooja Conversational)
             elif self._murf_available and self._speak_murf(text):
                 pass
-            # STEP 3: Amazon Polly (FALLBACK)
-            elif self._polly_available and self._speak_polly(text):
-                pass
+            # STEP 3: Amazon Polly disabled — sounds robotic; skip to pyttsx3
+            # elif self._polly_available and self._speak_polly(text):
+            #     pass
             # STEP 4: Last resort — pyttsx3 offline
             else:
                 self._speak_pyttsx3(text)

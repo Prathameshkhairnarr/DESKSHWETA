@@ -55,11 +55,20 @@ _CONTROL_PATTERNS = {
 }
 
 _MULTI_STEP_SIGNALS = [
+    # Hindi conjunctions / sequencing
     "aur phir", "uske baad", "then", "aur bhi", "saath mein",
     "pehle", "baad mein", "step by step", "ek ek karke",
+    # English "and" + action combos — most common multi-step pattern
+    " and ", " and then ", "open and", "and write", "and type",
+    "and send", "and save", "and search", "and find", "and play",
+    "and close", "and delete", "and move", "and copy", "and rename",
+    # Hindi equivalents
+    "aur likho", "aur type", "aur bhejo", "aur save", "aur kholo",
+    "aur band", "aur dhundho", " aur ", "likho", "type karo",
+    # Task keywords implying multiple steps
     "compare", "dhundh ke", "rename karke", "organize",
     "kal ki flight", "3 laptops", "fibonacci", "support resistance",
-    "zip bana", "pdfs ko",
+    "zip bana", "pdfs ko", "research", "summarize",
 ]
 
 
@@ -204,14 +213,16 @@ class AgentOrchestrator:
                 logger.warning("[Orchestrator] brain.think failed: %s", exc)
 
         # Agent loop path (single_action with no brain result, or multi_step)
-        return self._start_agent_task(text)
+        return self._start_agent_task(text, intent=intent)
 
-    def _start_agent_task(self, goal: str) -> Dict[str, Any]:
+    def _start_agent_task(self, goal: str, intent: str = "") -> Dict[str, Any]:
         """Create a task and start the ReAct loop in background."""
         task = task_manager.create(goal)
 
+        if not intent:
+            intent = classify_intent(goal)
+
         # For multi-step tasks run async; for single-step try sync first
-        intent = classify_intent(goal)
         if intent == "single_action":
             # Run synchronously with a short timeout (5 steps max)
             task.max_steps = 5
