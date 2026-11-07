@@ -20,6 +20,8 @@ from assistant.voice_input import VoiceInput
 from assistant.voice_output import VoiceOutput
 from assistant.agent_system import MultiAgentBrain
 from assistant.desktop_control import DesktopController
+from agent.orchestrator import AgentOrchestrator
+from agent.types import AgentEvent, EventType
 from assistant.channels.telegram_bot import ShwetaTelegramBot
 from assistant.activation import setup_activation
 from assistant.skills.proactive_agent import ProactiveManager
@@ -76,6 +78,17 @@ class ShwetaAssistant:
             on_timer_complete=self._on_timer_complete
         )
         print_status("Desktop Control", "OK", "System + Apps + Files")
+
+        # Agent Orchestrator — autonomous multi-step agent (Phase 2)
+        self.orchestrator = AgentOrchestrator(
+            multi_agent_brain=self.ai_brain,
+            desktop_controller=self.desktop_control,
+            event_callback=self._on_agent_event,
+        )
+        print_status("Agent Orchestrator", "OK", "ReAct loop + tool registry active")
+
+        # Pending confirmation for agent HIGH-risk actions
+        self._pending_agent_confirm: str | None = None  # task_id waiting for confirm
         print()
 
         # Initialize PyQt5 Avatar UI (main thread)
@@ -346,8 +359,8 @@ class ShwetaAssistant:
         except Exception:
             pass
 
-        # Send to AI brain (with language detection)
-        response = self.ai_brain.think(text, language_manager=self.desktop_control.language)
+        # Send to Orchestrator (AgentOrchestrator → old brain fast-path or ReAct loop)
+        response = self.orchestrator.process(text, language_manager=self.desktop_control.language)
 
         # Track user patterns
         try:
@@ -488,6 +501,54 @@ class ShwetaAssistant:
         self._last_activity_time = time.time()
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
 
+    def _on_agent_event(self, event: AgentEvent) -> None:
+        """
+        Called by AgentLoop for every step/task event.
+        Speaks progress updates and updates avatar state/emotion.
+        """
+        spoken = (event.spoken or "").strip()
+        emotion = event.emotion or "neutral"
+        etype = event.event_type
+
+        # Update avatar emotion
+        if emotion and emotion != "neutral":
+            self.ui.schedule(self.ui.set_emotion, emotion, 0.7)
+
+        if etype == EventType.CONFIRM_NEEDED:
+            # Agent is waiting for user confirmation (HIGH-risk action)
+            self._pending_agent_confirm = event.task_id
+            self._pending_confirm = None  # clear old-style confirm
+            if spoken:
+                self.ui.schedule(self.ui.set_text, f"❓ {spoken}")
+                self.ui.schedule(self.ui.show_chat_bubble, spoken, 8.0)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+                current_voice = self.desktop_control.language.get_voice()
+                self.voice_output.speak(spoken, voice=current_voice,
+                                        callback=self._on_speaking_done)
+            return
+
+        if etype in (EventType.TASK_DONE, EventType.TASK_FAILED):
+            self._is_processing = False
+            if spoken:
+                self.ui.schedule(self.ui.set_text, f"💬 {spoken}")
+                self.ui.schedule(self.ui.show_chat_bubble, spoken, 6.0)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+                current_voice = self.desktop_control.language.get_voice()
+                self.voice_output.speak(spoken, voice=current_voice,
+                                        callback=self._on_speaking_done)
+            else:
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+            return
+
+        # Progress narration for STEP_DONE / VOICE_UPDATE / PLAN_CREATED
+        if spoken and etype in (EventType.STEP_DONE, EventType.VOICE_UPDATE,
+                                 EventType.PLAN_CREATED, EventType.STEP_FAILED):
+            self.ui.schedule(self.ui.set_text, f"⚙ {spoken}")
+            self.ui.schedule(self.ui.show_chat_bubble, spoken, 3.0)
+            # Speak short updates without blocking (no callback — processing continues)
+            current_voice = self.desktop_control.language.get_voice()
+            self.voice_output.speak(spoken, voice=current_voice)
+
     def _init_idle_timer(self) -> None:
         """Initialize the background checker for idle state."""
         from PyQt5.QtCore import QTimer
@@ -600,7 +661,28 @@ class ShwetaAssistant:
         """
         text_lower = text.lower().strip()
 
-        # Handle confirmation for pending destructive actions
+        # Handle confirmation for agent HIGH-risk actions
+        if getattr(self, '_pending_agent_confirm', None):
+            confirm_words = ["haan", "yes", "kar do", "karo", "confirm", "ok", "haan karo"]
+            cancel_words = ["nahi", "no", "cancel", "mat karo", "ruko", "na"]
+            if any(w in text_lower for w in confirm_words):
+                task_id = self._pending_agent_confirm
+                self._pending_agent_confirm = None
+                self.orchestrator.resolve_confirmation(task_id, confirmed=True)
+                reply = "Theek hai, kar rahi hoon!"
+                self.ui.schedule(self.ui.set_text, reply)
+                self.voice_output.speak(reply, callback=self._on_speaking_done)
+                return True
+            elif any(w in text_lower for w in cancel_words):
+                task_id = self._pending_agent_confirm
+                self._pending_agent_confirm = None
+                self.orchestrator.resolve_confirmation(task_id, confirmed=False)
+                reply = "Theek hai, nahi karti."
+                self.ui.schedule(self.ui.set_text, reply)
+                self.voice_output.speak(reply, callback=self._on_speaking_done)
+                return True
+
+        # Handle confirmation for pending destructive actions (legacy path)
         if hasattr(self, '_pending_confirm') and self._pending_confirm:
             confirm_words = ["haan", "yes", "kar do", "karo", "confirm", "ok"]
             cancel_words = ["nahi", "no", "cancel", "mat karo", "ruko"]

@@ -45,3 +45,9 @@ screen-brightness-control
 opencv-python
 mediapipe
 murf
+
+# Agent system (Phase 2)
+pydantic>=2.0
+pywinauto
+apscheduler
+pytesseract

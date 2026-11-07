@@ -56,6 +56,13 @@ BROWSER_USER_DATA: str = os.getenv("BROWSER_USER_DATA", _selected_browser[2])
 GEMINI_MODEL: str = "gemini-2.0-flash-lite"
 CONVERSATION_HISTORY_LIMIT: int = 10
 
+# Agent System Settings (Phase 2)
+AGENT_ENABLED: bool = os.getenv("AGENT_ENABLED", "true").lower() == "true"
+AGENT_MAX_STEPS: int = int(os.getenv("AGENT_MAX_STEPS", "20"))
+AGENT_MAX_WALL_CLOCK_S: int = int(os.getenv("AGENT_MAX_WALL_CLOCK_S", "300"))
+AGENT_CONFIRM_TIMEOUT_S: int = int(os.getenv("AGENT_CONFIRM_TIMEOUT_S", "60"))
+GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
 # Google TTS Settings
 TTS_VOICE_HINDI: str = "hi-IN-Wavenet-A"
 TTS_VOICE_ENGLISH: str = "en-US-Wavenet-F"
