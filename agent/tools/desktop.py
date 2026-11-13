@@ -200,17 +200,9 @@ _ACTION_META: list[tuple[str, str, RiskLevel, int, Dict[str, Any]]] = [
     # ── Email ──────────────────────────────────────────────────────────────
     ("send_email",          "Email bhejna",                                     RiskLevel.HIGH, 30, _p(to=_STR, reason=_STR)),
 
-    # ── TradingView ────────────────────────────────────────────────────────
-    ("open_tradingview",     "TradingView pe chart kholna",                     RiskLevel.LOW,  15, _p(symbol=_STR)),
-    ("draw_trend_line",      "Chart pe trend line banana",                      RiskLevel.LOW,  10, _p(start_x=_INT, start_y=_INT, end_x=_INT, end_y=_INT)),
-    ("draw_horizontal_line", "Chart pe horizontal line banana",                 RiskLevel.LOW,  10, _p(y=_INT)),
-    ("draw_rectangle",       "Chart pe rectangle banana",                       RiskLevel.LOW,  10, _p(start_x=_INT, start_y=_INT, end_x=_INT, end_y=_INT)),
-    ("draw_fibonacci",       "Chart pe Fibonacci retracement banana",           RiskLevel.LOW,  10, _p(start_x=_INT, start_y=_INT, end_x=_INT, end_y=_INT)),
-    ("mark_support_resistance","Support/resistance lines mark karna",           RiskLevel.LOW,  15, _p()),
-    ("undo_drawing",         "Last drawing undo karna",                         RiskLevel.LOW,  5,  _p()),
-    ("clear_drawings",       "Saari drawings clear karna",                      RiskLevel.MEDIUM, 5, _p()),
-    ("change_symbol",        "Chart ka symbol change karna",                    RiskLevel.LOW,  10, _p(symbol=_STR)),
-    ("change_timeframe",     "Chart ka timeframe change karna",                 RiskLevel.LOW,  10, _p(timeframe=_STR)),
+    # ── Food & Travel (browser agent — stops at payment) ────────────────────
+    ("order_food",           "Swiggy/Zomato pe khana search karke cart tak le jana (payment user karega)", RiskLevel.MEDIUM, 90, _p(query=_STR)),
+    ("book_flight",          "Flight search karke options dikhana (booking/payment user karega)",          RiskLevel.MEDIUM, 90, _p(query=_STR)),
 
     # ── Games ──────────────────────────────────────────────────────────────
     ("start_game",           "Ek game shuru karna",                             RiskLevel.LOW,  5,  _p(game=_STR)),
@@ -268,10 +260,8 @@ def _infer_category(name: str) -> str:
     if name in ("send_whatsapp", "send_whatsapp_by_name", "send_email", "send_file_to_telegram",
                 "send_social_message"):
         return "comms"
-    if name.startswith("draw_") or name in ("open_tradingview", "mark_support_resistance",
-                                            "undo_drawing", "clear_drawings", "change_symbol",
-                                            "change_timeframe"):
-        return "trading"
+    if name in ("order_food", "book_flight"):
+        return "productivity"
     if name in ("remember", "remember_user_info", "get_memory", "set_mode", "identify_music",
                 "set_language", "get_usage_stats", "health_reminders_on", "health_reminders_off",
                 "change_style"):

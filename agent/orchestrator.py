@@ -204,11 +204,14 @@ class AgentOrchestrator:
             try:
                 result = self._brain.think(text, language_manager)
                 action = result.get("action", "none")
+                reply = result.get("reply", "")
                 if action != "none":
-                    # Old brain handled it — return directly (fast path)
                     result["agent"] = "desktop"
                     return result
-                # Brain gave no action for a non-smalltalk intent → agent loop
+                # Brain returned no action but has a reply — it's just chat, return it
+                if reply and reply != "Haan bol.":
+                    result["agent"] = "friend"
+                    return result
             except Exception as exc:
                 logger.warning("[Orchestrator] brain.think failed: %s", exc)
 

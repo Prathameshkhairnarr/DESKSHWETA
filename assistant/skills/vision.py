@@ -1,4 +1,4 @@
-"""
+﻿"""
 Screen Reader / Vision AI Skill.
 Takes screenshot and uses Gemini Vision to describe what's on screen.
 """
@@ -68,7 +68,7 @@ def read_screen(question: str = "Screen pe kya dikh raha hai?") -> Dict[str, str
 
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash-lite",
                 contents=[
                     types.Content(
                         parts=[
@@ -178,7 +178,7 @@ def read_live_video(question: str) -> Dict[str, str]:
 
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash-lite",
                 contents=[types.Content(parts=parts_list)]
             )
         except Exception as e:
@@ -225,4 +225,5 @@ def read_live_video(question: str) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"Live video reader error: {e}")
         return {"status": "error", "message": f"Live video read nahi ho paya: {str(e)}"}
+
 

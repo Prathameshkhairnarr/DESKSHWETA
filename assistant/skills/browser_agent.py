@@ -1,5 +1,5 @@
-"""
-Custom Browser Agent — Playwright + Gemini for autonomous browsing.
+﻿"""
+Custom Browser Agent â€” Playwright + Gemini for autonomous browsing.
 No paid API needed. Uses Playwright for browser control + Gemini for decisions.
 """
 
@@ -105,7 +105,7 @@ class BrowserAgent:
                                 price = await price_whole.inner_text() if price_whole else "N/A"
                                 rating = await rating_el.inner_text() if rating_el else ""
                                 if title:
-                                    line = f"{title.strip()} - ₹{price.strip()}"
+                                    line = f"{title.strip()} - â‚¹{price.strip()}"
                                     if rating:
                                         line += f" ({rating.strip()})"
                                     product_lines.append(line)
@@ -153,7 +153,7 @@ Rules:
 - "click": selector = button/link CSS selector
 - "extract": value = what info to extract from page
 - Keep it to 5-8 steps max
-- For search: goto site → type in search box → click search → wait → extract results
+- For search: goto site â†’ type in search box â†’ click search â†’ wait â†’ extract results
 
 Output ONLY valid JSON array, nothing else."""
 
@@ -165,7 +165,7 @@ Output ONLY valid JSON array, nothing else."""
                 resp = req.post(
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                    json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 500},
+                    json={"model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 500},
                     timeout=10
                 )
                 if resp.status_code == 200:
@@ -181,7 +181,7 @@ Output ONLY valid JSON array, nothing else."""
             from google.genai import types
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite", contents=prompt,
+                model="gemini-2.5-flash-lite", contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=500)
             )
             text = response.text.strip()
@@ -208,12 +208,44 @@ Output ONLY valid JSON array, nothing else."""
         except Exception:
             pass
 
-        # All failed — use fallback
+        # All failed â€” use fallback
         return self._fallback_plan(goal)
 
     def _fallback_plan(self, goal: str) -> List[Dict]:
-        """Simple fallback plan without AI."""
+        """Simple fallback plan without AI.
+
+        IMPORTANT: never dump the whole verbose goal into a Google search — that
+        triggered Google's bot reCAPTCHA (the flight-booking failure). Instead,
+        pull the clean query out of the goal (our order/flight goals wrap it in
+        single quotes) and go straight to the RIGHT site (Google Flights / Swiggy)."""
+        import re as _re
+        from urllib.parse import quote_plus
         goal_lower = goal.lower()
+        # Our _book_flight/_order_food goals embed the real query in 'single quotes'.
+        qm = _re.search(r"'([^']+)'", goal)
+        quoted = qm.group(1).strip() if qm else ""
+
+        # FLIGHTS → Google Flights deep link (not a raw search of the instruction)
+        if "flight" in goal_lower:
+            q = quoted or " ".join(goal.split()[:8])
+            return [
+                {"action": "goto", "selector": f"https://www.google.com/travel/flights?q={quote_plus('flights ' + q)}", "value": ""},
+                {"action": "wait", "selector": "", "value": "4"},
+                {"action": "extract", "selector": "", "value": "flight options with airline, time and price"},
+            ]
+
+        # FOOD → Swiggy / Zomato search page
+        if any(w in goal_lower for w in ("swiggy", "zomato", "food order", "order food", "khana")):
+            q = quoted or " ".join(goal.split()[:8])
+            if "zomato" in goal_lower:
+                url = f"https://www.zomato.com/search?q={quote_plus(q)}"
+            else:
+                url = f"https://www.swiggy.com/search?query={quote_plus(q)}"
+            return [
+                {"action": "goto", "selector": url, "value": ""},
+                {"action": "wait", "selector": "", "value": "4"},
+                {"action": "extract", "selector": "", "value": "food items and prices"},
+            ]
 
         if "amazon" in goal_lower:
             # Extract search query from goal
@@ -241,7 +273,10 @@ Output ONLY valid JSON array, nothing else."""
                 {"action": "extract", "selector": "", "value": "search results"},
             ]
         else:
-            return [{"action": "goto", "selector": f"https://www.google.com/search?q={goal}", "value": ""}]
+            # Never search the whole long instruction (that caused the reCAPTCHA).
+            # Use the quoted query, else just the first few words, URL-encoded.
+            q = quoted or " ".join(goal.split()[:8])
+            return [{"action": "goto", "selector": f"https://www.google.com/search?q={quote_plus(q)}", "value": ""}]
 
     async def _execute_step(self, page, step: Dict) -> Optional[str]:
         """Execute a single browser step."""
@@ -309,7 +344,7 @@ Output ONLY valid JSON array, nothing else."""
                                 title = await title_el.inner_text() if title_el else ""
                                 price = await price_whole.inner_text() if price_whole else "N/A"
                                 if title:
-                                    results.append(f"{title.strip()} - ₹{price.strip()}")
+                                    results.append(f"{title.strip()} - â‚¹{price.strip()}")
                             except Exception:
                                 continue
                         if results:
@@ -389,20 +424,20 @@ Output ONLY valid JSON array, nothing else."""
             "best", "recommend", "under", "ke andar", "buy", "khareed",
             "headphone", "earphone", "phone", "laptop", "watch", "speaker",
             "keyboard", "mouse", "camera", "bag", "shoes", "tablet",
-            "₹", "rupees", "rs", "budget", "price", "cheap", "sasta",
+            "â‚¹", "rupees", "rs", "budget", "price", "cheap", "sasta",
         ])
 
         if is_shopping:
-            system_prompt = """Tu Shweta hai — ek helpful Indian AI assistant jo shopping mein friend ki tarah help karti hai.
+            system_prompt = """Tu Shweta hai â€” ek helpful Indian AI assistant jo shopping mein friend ki tarah help karti hai.
 
 RULES:
 - Hinglish mein bol, bilkul casual jaise bestie ko bata rahi ho
 - TOP 2-3 products recommend kar with exact prices
 - Ek clear "Main ye recommend karungi" wala answer de
-- 80-100 words mein bol — concise reh
+- 80-100 words mein bol â€” concise reh
 - Agar price budget ke andar nahi hai toh clearly bol
-- Technical specs mat gina — simple benefits bata (bass achha hai, mic clear hai, etc)
-- Sound like: "Haan bhai! Main [product] recommend karungi — [price] mein milta hai, [benefit]. Dusra option [product2] hai..."
+- Technical specs mat gina â€” simple benefits bata (bass achha hai, mic clear hai, etc)
+- Sound like: "Haan bhai! Main [product] recommend karungi â€” [price] mein milta hai, [benefit]. Dusra option [product2] hai..."
 """
             user_prompt = f"""User ne poocha: "{goal}"
 
@@ -411,7 +446,7 @@ Search results (products found):
 
 Ab in results ke basis pe user ko best 2-3 recommendations de. Prices mention kar. Casual Hinglish mein bol."""
         else:
-            system_prompt = """Tu Shweta hai — helpful AI assistant. Search results ko padhke user ko clear, concise answer de Hinglish mein. 80-100 words max."""
+            system_prompt = """Tu Shweta hai â€” helpful AI assistant. Search results ko padhke user ko clear, concise answer de Hinglish mein. 80-100 words max."""
             user_prompt = f"""User ne poocha: "{goal}"
 
 Search results:
@@ -419,7 +454,7 @@ Search results:
 
 Ab in results ke basis pe user ko clear answer de."""
 
-        # Try Groq (best for this — fast + good Hindi)
+        # Try Groq (best for this â€” fast + good Hindi)
         try:
             import requests as req
             groq_key = os.getenv("GROQ_API_KEY", "")
@@ -428,7 +463,7 @@ Ab in results ke basis pe user ko clear answer de."""
                     "https://api.groq.com/openai/v1/chat/completions",
                     headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                     json={
-                        "model": "llama-3.3-70b-versatile",
+                        "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
@@ -449,7 +484,7 @@ Ab in results ke basis pe user ko clear answer de."""
             from google.genai import types
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash-lite",
                 contents=f"{system_prompt}\n\n{user_prompt}",
                 config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=250)
             )
@@ -481,7 +516,7 @@ Ab in results ke basis pe user ko clear answer de."""
         except Exception:
             pass
 
-        # All AI failed — return raw product list directly
+        # All AI failed â€” return raw product list directly
         if content and "PRODUCTS FOUND:" in content:
             lines = content.replace("PRODUCTS FOUND:\n", "").split("\n")[:3]
             return "Maine ye options dekhe: " + ", ".join(lines) + ". Amazon pe check kar."
@@ -502,3 +537,4 @@ Ab in results ke basis pe user ko clear answer de."""
                 f.write(f"  Result: {entry['result'][:100]}\n{'='*40}\n")
         except Exception:
             pass
+

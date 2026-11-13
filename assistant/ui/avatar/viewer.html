@@ -230,13 +230,6 @@
 </head>
 
 <body>
-    <div id="resize-grip"></div>
-    <div id="quick-actions">
-        <div class="quick-btn" id="btn-screenshot">📸<span class="tooltip">Screenshot</span></div>
-        <div class="quick-btn" id="btn-music">🎵<span class="tooltip">Music</span></div>
-        <div class="quick-btn" id="btn-weather">🌤<span class="tooltip">Weather</span></div>
-        <div class="quick-btn" id="btn-notes">📝<span class="tooltip">Notes</span></div>
-    </div>
     <canvas id="particles"
         style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:50;"></canvas>
     <div id="chat-bubble"></div>
@@ -261,14 +254,21 @@
         let breathPhase = 0;
         let musicVibing = false;
         let lookTarget; // dummy target for eye tracking
+        let hairJoints = []; // hair spring-bone joints + per-strand phase for the breeze effect
 
         // === EMOTION SYSTEM ===
-        let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed
+        let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed, think, curious, wink, joy, fun, pout, bored, sleepy
         let emotionIntensity = 0.0;
         let targetEmotionIntensity = 0.0;
         let emotionDecayTimer = 0;  // Auto-decay emotion after some time
         let emotionHeadTiltX = 0;  // Emotion-driven head X rotation target
         let emotionHeadTiltZ = 0;  // Emotion-driven head Z rotation target
+
+        // === WINK SYSTEM ===
+        let winkTimer = 0;
+        let isWinking = false;
+        let winkDuration = 0;
+        let winkEye = 'left'; // which eye to wink
 
         // === RANDOM LOOK AROUND SYSTEM ===
         let randomLookX = 0;
@@ -287,9 +287,10 @@
 
             // Camera — portrait view, upper body
             camera = new THREE.PerspectiveCamera(24, window.innerWidth / window.innerHeight, 0.1, 100);
-            // Camera — head + upper chest, hands not visible
-            camera.position.set(0, 1.35, 1.1);
-            camera.lookAt(new THREE.Vector3(0, 1.27, 0));
+            // Camera — head + upper chest with headroom (pulled back + raised so head
+            // never clips the top of the window for the new taller model).
+            camera.position.set(0, 1.46, 1.55);
+            camera.lookAt(new THREE.Vector3(0, 1.36, 0));
 
             // Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -299,15 +300,19 @@
             renderer.outputEncoding = THREE.sRGBEncoding;
             document.body.appendChild(renderer.domElement);
 
-            // Lighting — soft natural (reduced shine)
-            const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+            // Lighting — soft natural, low intensity so skin isn't over-bright/shiny.
+            // Warm, slightly dimmed key + gentle fill → natural human skin tone.
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.42);
             scene.add(ambient);
 
-            const dirLight = new THREE.DirectionalLight(0xffeedd, 0.35);
+            const dirLight = new THREE.DirectionalLight(0xfff0e6, 0.30);
             dirLight.position.set(0, 2, 3);
             scene.add(dirLight);
 
-            const sideLight = new THREE.DirectionalLight(0xddeeff, 0.15);
+            const sideLight = new THREE.DirectionalLight(0xdde6ff, 0.13);
             sideLight.position.set(-2, 1, 2);
             scene.add(sideLight);
 
@@ -317,7 +322,7 @@
                 return new THREE_VRM.VRMLoaderPlugin(parser);
             });
 
-            loader.load('./AvatarSample_F.vrm',
+            loader.load('./shweta.vrm',
                 (gltf) => {
                     vrm = gltf.userData.vrm;
                     if (vrm) {
@@ -329,11 +334,29 @@
                         if (vrm.springBoneManager) {
                             const joints = vrm.springBoneManager.joints || [];
                             console.log('Spring Bones found:', joints.length, 'joints');
-                            // Apply gravity for natural hair fall
+                            // Gravity pulls hair down AND slightly backward (-z = behind
+                            // the shoulders, away from camera) so long hair stays behind
+                            // instead of draping over the chest.
+                            hairJoints = [];
+                            let _ji = 0;
                             joints.forEach(joint => {
                                 if (joint.settings) {
-                                    joint.settings.gravityDir = new THREE.Vector3(0, -1, 0);
-                                    joint.settings.gravityPower = 0.1;
+                                    // Gentle straight-down fall with only a tiny backward
+                                    // lean — stronger values made the spring bones overshoot
+                                    // and glitch. Natural + stable beats a hard pull-back.
+                                    joint.settings.gravityDir = new THREE.Vector3(0, -1, -0.12).normalize();
+                                    // A bit more power so the breeze wobble is actually
+                                    // visible (0.1 was so low the strands barely moved).
+                                    joint.settings.gravityPower = 0.22;
+                                    // Remember base direction + a staggered phase so each
+                                    // strand drifts independently in the breeze (no unison jhoom).
+                                    hairJoints.push({
+                                        settings: joint.settings,
+                                        baseX: joint.settings.gravityDir.x,
+                                        baseZ: joint.settings.gravityDir.z,
+                                        phase: _ji * 0.7,
+                                    });
+                                    _ji++;
                                 }
                             });
                         } else {
@@ -344,6 +367,29 @@
                         if (vrm.lookAt) {
                             vrm.lookAt.target = lookTarget;
                         }
+
+                        // === SKIN TONE TINT ===
+                        // Tint only the "_SKIN" materials (face + body skin) to a warm
+                        // natural human tone. Mouth/brow/eyes/hair/cloth untouched.
+                        const skinColor = new THREE.Color(0xFFCD94); // warm natural skin tone
+                        const skinShade = skinColor.clone().multiplyScalar(0.82); // slightly darker for shadow
+                        vrm.scene.traverse((obj) => {
+                            if (!obj.isMesh) return;
+                            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                            mats.forEach((mat) => {
+                                if (!mat || !mat.name || mat.name.indexOf('_SKIN') === -1) return;
+                                // MToon (three-vrm) exposes .color and shade factor; plain
+                                // materials expose .color. Cover both + raw uniforms.
+                                if (mat.color) mat.color.copy(skinColor);
+                                if ('shadeColorFactor' in mat && mat.shadeColorFactor) mat.shadeColorFactor.copy(skinShade);
+                                if (mat.uniforms) {
+                                    if (mat.uniforms.litFactor) mat.uniforms.litFactor.value.copy(skinColor);
+                                    if (mat.uniforms.shadeColorFactor) mat.uniforms.shadeColorFactor.value.copy(skinShade);
+                                }
+                                mat.needsUpdate = true;
+                                console.log('Skin tinted:', mat.name);
+                            });
+                        });
 
                         console.log('VRM loaded!');
                     } else {
@@ -425,15 +471,16 @@
                             isBlinking = false;
                             blinkTimer = 2.5 + Math.random() * 3.5;
                             blinkVal = 0;
-                            // 15% chance double blink
-                            if (Math.random() < 0.15) {
-                                blinkTimer = 0.15;
-                            }
+                            if (Math.random() < 0.15) blinkTimer = 0.15;
                         }
-                        if (vrm.expressionManager) {
-                            vrm.expressionManager.setValue('blink', blinkVal);
-                        } else if (vrm.blendShapeProxy) {
-                            vrm.blendShapeProxy.setValue('blink', blinkVal);
+                        // Skip full blink when wink system is active (avoid fighting)
+                        const skipBlink = (currentEmotion === 'wink' && isWinking);
+                        if (!skipBlink) {
+                            if (vrm.expressionManager) {
+                                vrm.expressionManager.setValue('blink', blinkVal);
+                            } else if (vrm.blendShapeProxy) {
+                                vrm.blendShapeProxy.setValue('blink', blinkVal);
+                            }
                         }
                     }
 
@@ -478,22 +525,30 @@
                         }
                     }
 
-                    // 4. LIP SYNC (smooth lerp with natural jaw movement)
+                    // 4. LIP SYNC — multi-phoneme for natural speech
                     lipSyncValue = THREE.MathUtils.lerp(lipSyncValue, targetLipSync, delta * 15);
-                    // Add slight variation for natural look
                     let lipVal = lipSyncValue;
                     if (lipVal > 0.05) {
-                        // Add micro-variation to avoid robotic look
                         lipVal += Math.sin(clock.elapsedTime * 12) * 0.03;
                         lipVal = Math.max(0, Math.min(1, lipVal));
                     }
+                    // Cycle phonemes over time so it doesn't look static
+                    const phonemeCycle = clock.elapsedTime * 3.5;
+                    const aaWeight = lipVal * (0.5 + Math.sin(phonemeCycle) * 0.3);        // open vowel
+                    const ohWeight = lipVal * (0.3 + Math.cos(phonemeCycle * 0.7) * 0.15); // rounded
+                    const ihWeight = lipVal * Math.max(0, Math.sin(phonemeCycle * 1.3) * 0.25); // mid vowel
+                    const eeWeight = lipVal * Math.max(0, Math.cos(phonemeCycle * 1.1) * 0.2);  // smile vowel
                     if (vrm.expressionManager) {
-                        vrm.expressionManager.setValue('aa', lipVal * 0.8);
-                        // Add 'oh' shape for rounder mouth on higher volumes
-                        vrm.expressionManager.setValue('oh', lipVal * 0.3);
+                        vrm.expressionManager.setValue('aa', Math.max(0, Math.min(1, aaWeight)));
+                        vrm.expressionManager.setValue('oh', Math.max(0, Math.min(1, ohWeight)));
+                        try { vrm.expressionManager.setValue('ih', Math.max(0, Math.min(1, ihWeight))); } catch (e) { }
+                        try { vrm.expressionManager.setValue('ee', Math.max(0, Math.min(1, eeWeight))); } catch (e) { }
+                        try { vrm.expressionManager.setValue('ou', Math.max(0, Math.min(1, ohWeight * 0.5))); } catch (e) { }
                     } else if (vrm.blendShapeProxy) {
-                        vrm.blendShapeProxy.setValue('a', lipVal * 0.8);
-                        vrm.blendShapeProxy.setValue('o', lipVal * 0.3);
+                        vrm.blendShapeProxy.setValue('a', Math.max(0, Math.min(1, aaWeight)));
+                        vrm.blendShapeProxy.setValue('o', Math.max(0, Math.min(1, ohWeight)));
+                        try { vrm.blendShapeProxy.setValue('i', Math.max(0, Math.min(1, ihWeight))); } catch (e) { }
+                        try { vrm.blendShapeProxy.setValue('e', Math.max(0, Math.min(1, eeWeight))); } catch (e) { }
                     }
 
                     // 5. EMOTION SYSTEM — smooth blend between expressions
@@ -520,22 +575,40 @@
                         resetExpr('sad'); resetExpr('sorrow');
                         resetExpr('surprised');
                         resetExpr('relaxed'); resetExpr('fun');
+                        resetExpr('blinkLeft'); resetExpr('blinkRight');
 
                         const setExpr = (name, val) => { try { expr.setValue(name, val); } catch (e) { } };
 
                         // Apply current emotion
                         switch (currentEmotion) {
                             case 'happy':
-                                setExpr('happy', emotionIntensity * 0.8);
-                                setExpr('joy', emotionIntensity * 0.8);
-                                // Slight head tilt for cute happy look
+                                setExpr('happy', emotionIntensity * 0.85);
+                                setExpr('joy', emotionIntensity * 0.85);
+                                // Slight eye squint for natural happy
+                                setExpr('blinkLeft', emotionIntensity * 0.15);
+                                setExpr('blinkRight', emotionIntensity * 0.15);
                                 emotionHeadTiltZ = emotionIntensity * 0.05;
+                                emotionHeadTiltX = 0;
+                                break;
+
+                            case 'joy':
+                                setExpr('happy', emotionIntensity * 0.9);
+                                setExpr('joy', emotionIntensity * 1.0);
+                                setExpr('blinkLeft', emotionIntensity * 0.2);
+                                setExpr('blinkRight', emotionIntensity * 0.2);
+                                emotionHeadTiltZ = emotionIntensity * 0.07;
+                                emotionHeadTiltX = -emotionIntensity * 0.05;
+                                break;
+
+                            case 'fun':
+                                setExpr('fun', emotionIntensity * 0.9);
+                                setExpr('happy', emotionIntensity * 0.4);
+                                emotionHeadTiltZ = emotionIntensity * 0.06;
                                 emotionHeadTiltX = 0;
                                 break;
 
                             case 'angry':
                                 setExpr('angry', emotionIntensity * 0.7);
-                                // Head slightly forward (aggressive)
                                 emotionHeadTiltX = emotionIntensity * 0.1;
                                 emotionHeadTiltZ = 0;
                                 break;
@@ -543,30 +616,91 @@
                             case 'sad':
                                 setExpr('sad', emotionIntensity * 0.7);
                                 setExpr('sorrow', emotionIntensity * 0.7);
-                                // Head tilted DOWN noticeably
                                 emotionHeadTiltX = -emotionIntensity * 0.2;
                                 emotionHeadTiltZ = emotionIntensity * 0.04;
                                 break;
 
                             case 'surprised':
                                 setExpr('surprised', emotionIntensity * 0.8);
-                                // Head slightly back
                                 emotionHeadTiltX = -emotionIntensity * 0.08;
                                 emotionHeadTiltZ = 0;
                                 break;
 
                             case 'relaxed':
                                 setExpr('relaxed', emotionIntensity * 0.6);
-                                setExpr('fun', emotionIntensity * 0.6);
+                                setExpr('fun', emotionIntensity * 0.4);
                                 setExpr('happy', emotionIntensity * 0.2);
                                 setExpr('joy', emotionIntensity * 0.2);
                                 emotionHeadTiltX = 0;
                                 emotionHeadTiltZ = emotionIntensity * 0.03;
                                 break;
 
+                            case 'think':
+                                // Thinking: slight squint + head tilt right + upward look.
+                                // (Hand-to-chin arm pose applied in the arm section below.)
+                                setExpr('blinkLeft', emotionIntensity * 0.3);
+                                setExpr('blinkRight', emotionIntensity * 0.1);
+                                emotionHeadTiltZ = emotionIntensity * 0.08;  // tilt right
+                                emotionHeadTiltX = emotionIntensity * 0.05;  // chin up slightly
+                                // Move eyes up-right for thinking look
+                                if (lookTarget && !reactionAnimId) {
+                                    lookTarget.position.x = THREE.MathUtils.lerp(lookTarget.position.x, 0.8, delta * 2);
+                                    lookTarget.position.y = THREE.MathUtils.lerp(lookTarget.position.y, 1.6, delta * 2);
+                                }
+                                break;
+
+                            case 'playful':
+                                // Playful: bright happy face + lively head tilt.
+                                // (Energetic bounce + raised hand applied in arm section below.)
+                                setExpr('happy', emotionIntensity * 0.8);
+                                setExpr('joy', emotionIntensity * 0.9);
+                                setExpr('fun', emotionIntensity * 0.5);
+                                setExpr('blinkLeft', emotionIntensity * 0.15);
+                                setExpr('blinkRight', emotionIntensity * 0.15);
+                                emotionHeadTiltZ = Math.sin(clock.elapsedTime * 4.0) * emotionIntensity * 0.12;
+                                emotionHeadTiltX = -emotionIntensity * 0.04;
+                                break;
+
+                            case 'curious':
+                                // Curious: head tilt + wide eyes (open blink to 0)
+                                setExpr('surprised', emotionIntensity * 0.3);
+                                emotionHeadTiltZ = emotionIntensity * 0.1;
+                                emotionHeadTiltX = -emotionIntensity * 0.03;
+                                break;
+
+                            case 'wink':
+                                // Wink: handled by wink system below — just set head pose
+                                emotionHeadTiltZ = emotionIntensity * 0.03;
+                                setExpr('happy', emotionIntensity * 0.5);
+                                setExpr('joy', emotionIntensity * 0.5);
+                                break;
+
+                            case 'pout':
+                                setExpr('sad', emotionIntensity * 0.4);
+                                setExpr('sorrow', emotionIntensity * 0.3);
+                                emotionHeadTiltX = -emotionIntensity * 0.1;
+                                emotionHeadTiltZ = emotionIntensity * 0.05;
+                                break;
+
+                            case 'bored':
+                                setExpr('relaxed', emotionIntensity * 0.5);
+                                setExpr('blinkLeft', emotionIntensity * 0.4);
+                                setExpr('blinkRight', emotionIntensity * 0.4);
+                                emotionHeadTiltX = emotionIntensity * 0.08;  // chin down
+                                emotionHeadTiltZ = emotionIntensity * 0.04;
+                                break;
+
+                            case 'sleepy':
+                                // Heavy eyelids
+                                setExpr('blinkLeft', emotionIntensity * 0.6);
+                                setExpr('blinkRight', emotionIntensity * 0.6);
+                                setExpr('relaxed', emotionIntensity * 0.4);
+                                emotionHeadTiltX = emotionIntensity * 0.12;  // drooping chin
+                                emotionHeadTiltZ = Math.sin(clock.elapsedTime * 0.5) * emotionIntensity * 0.06;
+                                break;
+
                             case 'neutral':
                             default:
-                                // Subtle smile when listening
                                 if (currentState === 'listening') {
                                     setExpr('happy', 0.2);
                                     setExpr('joy', 0.2);
@@ -576,24 +710,51 @@
                                 break;
                         }
 
-                        // Thinking state: head tilt
+                        // Thinking state: head tilt + squint (even when emotion is set externally)
                         if (currentState === 'thinking' && currentEmotion === 'neutral') {
-                            emotionHeadTiltZ = 0.05;
+                            emotionHeadTiltZ = 0.07;
+                            setExpr('blinkLeft', 0.25);
+                            setExpr('blinkRight', 0.1);
+                        }
+
+                        // === WINK SYSTEM ===
+                        if (currentEmotion === 'wink') {
+                            winkTimer -= delta;
+                            if (winkTimer <= 0 && !isWinking) {
+                                isWinking = true;
+                                winkDuration = 0;
+                                winkEye = Math.random() < 0.5 ? 'left' : 'right';
+                                winkTimer = 2.0 + Math.random() * 3.0;
+                            }
+                            if (isWinking) {
+                                winkDuration += delta;
+                                let wVal = 0;
+                                if (winkDuration < 0.08) wVal = winkDuration / 0.08;
+                                else if (winkDuration < 0.25) wVal = 1.0;
+                                else if (winkDuration < 0.33) wVal = 1.0 - (winkDuration - 0.25) / 0.08;
+                                else { isWinking = false; wVal = 0; }
+                                const eyeKey = winkEye === 'left' ? 'blinkLeft' : 'blinkRight';
+                                setExpr(eyeKey, wVal);
+                            }
                         }
                     }
 
-                    // Dynamic Jiggle / Wind Physics Update
-                    if (vrm.springBoneManager && vrm.springBoneManager.joints) {
-                        const time = clock.elapsedTime;
-                        // Oscillating wind/movement force
-                        const windX = Math.sin(time * 2.0) * 0.04 + Math.sin(time * 0.5) * 0.02;
-                        const windZ = Math.cos(time * 1.5) * 0.04;
-                        vrm.springBoneManager.joints.forEach(joint => {
-                            if (joint.settings && joint.settings.gravityDir) {
-                                // Default gravity is down (-1). We add horizontal wind.
-                                joint.settings.gravityDir.set(windX, -1, windZ).normalize();
-                            }
-                        });
+                    // === SUBTLE AIR / BREEZE ON HAIR ===
+                    // Very gentle per-strand wobble of each spring bone's gravity
+                    // direction, so the hair looks like a light breeze is flowing
+                    // through it. Tiny amplitude + a different phase per strand means
+                    // threads drift independently — a soft shimmer, NOT the old unison
+                    // "jhoom" sway. Must run BEFORE vrm.update (it reads gravityDir).
+                    if (hairJoints.length) {
+                        const _t = clock.elapsedTime;
+                        const amp = 0.1; // breeze — visible but still per-strand, no jhoom
+                        for (let i = 0; i < hairJoints.length; i++) {
+                            const h = hairJoints[i];
+                            if (!h.settings || !h.settings.gravityDir) continue;
+                            const wobX = Math.sin(_t * 1.1 + h.phase) * amp;
+                            const wobZ = Math.cos(_t * 0.9 + h.phase * 1.3) * amp * 0.6;
+                            h.settings.gravityDir.set(h.baseX + wobX, -1, h.baseZ + wobZ).normalize();
+                        }
                     }
 
                     // Update VRM
@@ -604,11 +765,34 @@
                         runMusicVibe(clock.elapsedTime);
                     }
 
-                    // AFTER vrm.update — override arm bones every frame
+                    // AFTER vrm.update — body + arm poses for expressive emotions
                     const lArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
                     const rArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
-                    if (lArm) lArm.rotation.z = -1.0;
-                    if (rArm) rArm.rotation.z = 1.0;
+                    const rElbow = vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+
+                    // Arms rest naturally down at the sides for ALL emotions, elbow straight.
+                    // (Hand-to-chin needs precise rig IK that isn't reliable to pose blindly —
+                    //  it kept twisting the arm. Thinking reads from the head tilt + eyes-up
+                    //  instead; playful reads from the bounce. Clean beats a broken arm.)
+                    const armLerp = 2.5;
+                    if (lArm) lArm.rotation.z = THREE.MathUtils.lerp(lArm.rotation.z, -1.35, delta * armLerp);
+                    if (rArm) {
+                        rArm.rotation.z = THREE.MathUtils.lerp(rArm.rotation.z, 1.35, delta * armLerp);
+                        rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, delta * armLerp);
+                    }
+                    if (rElbow) {
+                        rElbow.rotation.x = THREE.MathUtils.lerp(rElbow.rotation.x, 0, delta * armLerp);
+                        rElbow.rotation.y = THREE.MathUtils.lerp(rElbow.rotation.y, 0, delta * armLerp);
+                        rElbow.rotation.z = THREE.MathUtils.lerp(rElbow.rotation.z, 0, delta * armLerp);
+                    }
+
+                    // Playful: light full-body bounce (whole avatar hops gently).
+                    if (currentEmotion === 'playful') {
+                        const bounce = Math.abs(Math.sin(clock.elapsedTime * 5.0)) * 0.018 * emotionIntensity;
+                        vrm.scene.position.y = bounce;
+                    } else {
+                        vrm.scene.position.y = THREE.MathUtils.lerp(vrm.scene.position.y, 0, delta * 4);
+                    }
                 } catch (e) {
                     // Don't let animation errors kill the loop
                     console.warn('Animation error:', e.message);
@@ -766,46 +950,43 @@
         };
 
         window.setEmotion = function (emotion, intensity) {
-            // Set avatar emotion: happy, angry, sad, surprised, relaxed, neutral
-            // intensity: 0.0-1.0 (default 0.8)
-            const validEmotions = ['happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral'];
-            emotion = emotion.toLowerCase();
-
-            if (!validEmotions.includes(emotion)) {
-                emotion = 'neutral';
-            }
+            // Supported emotions: happy, angry, sad, surprised, relaxed, neutral,
+            //                     think, curious, wink, joy, fun, pout, bored, sleepy
+            const validEmotions = [
+                'happy', 'angry', 'sad', 'surprised', 'relaxed', 'neutral',
+                'think', 'curious', 'wink', 'joy', 'fun', 'pout', 'bored', 'sleepy',
+                'playful'
+            ];
+            emotion = (emotion || 'neutral').toLowerCase();
+            if (!validEmotions.includes(emotion)) emotion = 'neutral';
 
             currentEmotion = emotion;
             targetEmotionIntensity = (intensity !== undefined) ? Math.min(1.0, Math.max(0.0, intensity)) : 0.8;
-            emotionDecayTimer = 6.0;  // Emotion lasts 6 seconds before fading
+            emotionDecayTimer = 6.0;
 
-            // Update indicator color based on emotion
+            // Reset wink state on new emotion
+            if (emotion === 'wink') { winkTimer = 0.3; isWinking = false; }
+
             const indicator = document.getElementById('indicator');
-            switch (emotion) {
-                case 'happy':
-                    indicator.style.background = '#ffdd00';
-                    indicator.style.boxShadow = '0 0 8px #ffdd0088';
-                    break;
-                case 'angry':
-                    indicator.style.background = '#ff4444';
-                    indicator.style.boxShadow = '0 0 8px #ff444488';
-                    break;
-                case 'sad':
-                    indicator.style.background = '#6688ff';
-                    indicator.style.boxShadow = '0 0 8px #6688ff88';
-                    break;
-                case 'surprised':
-                    indicator.style.background = '#ff88ff';
-                    indicator.style.boxShadow = '0 0 8px #ff88ff88';
-                    break;
-                case 'relaxed':
-                    indicator.style.background = '#88ffcc';
-                    indicator.style.boxShadow = '0 0 8px #88ffcc88';
-                    break;
-                default:
-                    indicator.style.background = '#00ff88';
-                    indicator.style.boxShadow = '0 0 8px #00ff8888';
-            }
+            const colorMap = {
+                happy:    ['#ffdd00', '#ffdd0088'],
+                joy:      ['#ffee22', '#ffee2288'],
+                fun:      ['#ff9900', '#ff990088'],
+                angry:    ['#ff4444', '#ff444488'],
+                sad:      ['#6688ff', '#6688ff88'],
+                surprised:['#ff88ff', '#ff88ff88'],
+                relaxed:  ['#88ffcc', '#88ffcc88'],
+                think:    ['#ffaa44', '#ffaa4488'],
+                curious:  ['#44ddff', '#44ddff88'],
+                wink:     ['#ff88cc', '#ff88cc88'],
+                pout:     ['#cc88ff', '#cc88ff88'],
+                bored:    ['#aaaaaa', '#aaaaaa88'],
+                sleepy:   ['#8888cc', '#8888cc88'],
+                playful:  ['#ff66aa', '#ff66aa88'],
+            };
+            const [bg, shadow] = colorMap[emotion] || ['#00ff88', '#00ff8888'];
+            indicator.style.background = bg;
+            indicator.style.boxShadow = `0 0 8px ${shadow}`;
         };
 
         window.setStatusText = function (text) {
@@ -1352,7 +1533,7 @@
         // === RESIZE WINDOW (bottom right corner) ===
         let isResizing = false, startWidth = 0, startHeight = 0, startMouseX = 0, startMouseY = 0;
         const resizeGrip = document.getElementById('resize-grip');
-        resizeGrip.addEventListener('mousedown', (e) => {
+        if (resizeGrip) resizeGrip.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             e.preventDefault();
             isResizing = true;
@@ -1372,45 +1553,8 @@
 
         // (Handled in the mousedown/mouseup above)
 
-        // === QUICK ACTION BUTTONS — show on hover in bottom area ===
-        let quickActionsEl = document.getElementById('quick-actions');
-        let hideTimeout = null;
-
-        document.addEventListener('mousemove', (e) => {
-            const bottomZone = window.innerHeight * 0.6; // bottom 40%
-            if (e.clientY > bottomZone) {
-                quickActionsEl.classList.add('visible');
-                if (hideTimeout) { clearTimeout(hideTimeout); hideTimeout = null; }
-            } else {
-                if (!hideTimeout) {
-                    hideTimeout = setTimeout(() => {
-                        quickActionsEl.classList.remove('visible');
-                        hideTimeout = null;
-                    }, 800);
-                }
-            }
-        });
-
-        document.getElementById('btn-screenshot').addEventListener('click', (e) => {
-            e.stopPropagation();
-            document.title = 'ACTION:take_screenshot';
-            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-        });
-        document.getElementById('btn-music').addEventListener('click', (e) => {
-            e.stopPropagation();
-            document.title = 'ACTION:spotify_mood:chill';
-            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-        });
-        document.getElementById('btn-weather').addEventListener('click', (e) => {
-            e.stopPropagation();
-            document.title = 'ACTION:get_weather';
-            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-        });
-        document.getElementById('btn-notes').addEventListener('click', (e) => {
-            e.stopPropagation();
-            document.title = 'ACTION:list_notes';
-            setTimeout(() => { document.title = 'Shweta Avatar'; }, 100);
-        });
+        // Quick-action buttons and the resize grip were removed from the avatar
+        // screen (user wanted a clean VRM view).
 
         // === DYNAMIC AUDIO VISUALIZER (Waveform) ===
         const canvas = document.getElementById('particles');
@@ -1422,58 +1566,48 @@
             canvas.height = window.innerHeight;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Draw waveform if speaking or listening
+            // Draw a subtle, elegant waveform near the bottom when speaking/listening.
             if (lipSyncValue > 0.01 || currentState === 'listening' || currentState === 'thinking') {
-                const centerY = canvas.height - 30; // Bottom area
+                const centerY = canvas.height - 18; // hug the very bottom edge
                 const centerX = canvas.width / 2;
 
                 let color = '#00d4ff'; // Speaking (cyan)
-                let amplitude = lipSyncValue * 60 + 5;
-                let frequency = 0.03;
+                let amplitude = lipSyncValue * 34 + 3;
+                let frequency = 0.035;
 
                 if (currentState === 'listening') {
                     color = '#00ff88';
-                    amplitude = 20 + Math.sin(waveTime * 2) * 5;
-                    frequency = 0.02;
+                    amplitude = 8 + Math.sin(waveTime * 2) * 2;   // gentle, calm pulse
+                    frequency = 0.028;
                 } else if (currentState === 'thinking') {
                     color = '#ffaa00';
-                    amplitude = 10 + Math.sin(waveTime) * 10;
-                    frequency = 0.05;
+                    amplitude = 6 + Math.sin(waveTime) * 3;
+                    frequency = 0.045;
                 }
+
+                // Narrow, centered taper so the wave is a soft hint, not a wide band.
+                const taperWidth = canvas.width * 0.28;
 
                 ctx.beginPath();
                 ctx.moveTo(0, centerY);
-                for (let x = 0; x <= canvas.width; x += 5) {
+                for (let x = 0; x <= canvas.width; x += 4) {
                     const dist = Math.abs(x - centerX);
-                    const taper = Math.max(0, 1 - (dist / (canvas.width * 0.4)));
-
-                    const y = centerY + Math.sin(x * frequency + waveTime) * amplitude * taper;
+                    const taper = Math.max(0, 1 - (dist / taperWidth));
+                    const eased = taper * taper; // smoother fade at the ends
+                    const y = centerY + Math.sin(x * frequency + waveTime) * amplitude * eased;
                     ctx.lineTo(x, y);
                 }
 
                 ctx.strokeStyle = color;
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 2;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
-
-                // Neon Glow
-                ctx.shadowBlur = 15;
+                ctx.shadowBlur = 7;
                 ctx.shadowColor = color;
-                ctx.stroke();
-
-                // Draw a second faded line for depth
-                ctx.beginPath();
-                ctx.moveTo(0, centerY);
-                for (let x = 0; x <= canvas.width; x += 5) {
-                    const dist = Math.abs(x - centerX);
-                    const taper = Math.max(0, 1 - (dist / (canvas.width * 0.4)));
-                    const y = centerY + Math.sin(x * frequency * 1.5 - waveTime * 1.2) * (amplitude * 0.5) * taper;
-                    ctx.lineTo(x, y);
-                }
-                ctx.strokeStyle = color;
-                ctx.globalAlpha = 0.4;
+                ctx.globalAlpha = 0.85;
                 ctx.stroke();
                 ctx.globalAlpha = 1.0;
+                ctx.shadowBlur = 0;
             }
 
             waveTime += 0.1;

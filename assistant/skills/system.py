@@ -79,7 +79,7 @@ def get_time() -> Dict[str, str]:
 
     return {
         "status": "success",
-        "message": f"Abhi {time_str} ({time_formal})",
+        "message": f"Abhi {time_str}.",
         "time": time_formal
     }
 

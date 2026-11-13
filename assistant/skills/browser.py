@@ -27,6 +27,19 @@ def _open_url(url: str) -> None:
         webbrowser.open(url)
 
 
+def close_current_media_tab() -> None:
+    """Focus the browser and close the current (foreground) tab with Ctrl+W.
+    Used to replace a playing song IN THE SAME tab instead of piling up new tabs."""
+    import time
+    try:
+        _focus_browser()
+        time.sleep(0.2)
+        pyautogui.hotkey("ctrl", "w")
+        time.sleep(0.4)  # let the tab close before the next one opens
+    except Exception as e:
+        logger.debug(f"close_current_media_tab failed: {e}")
+
+
 def open_youtube() -> Dict[str, str]:
     """Open YouTube in existing browser."""
     try:
@@ -214,23 +227,27 @@ def media_mute() -> Dict[str, str]:
 
 
 def media_volume_up(steps: int = 5) -> Dict[str, str]:
-    """Increase system volume."""
+    """Increase the VIDEO/TAB volume (YouTube player), not the system volume.
+    YouTube maps the Up arrow to +5% player volume when the player is focused."""
     try:
         steps = min(int(steps), 10)
+        _focus_browser()
         for _ in range(steps):
-            pyautogui.press("volumeup")
-        return {"status": "success", "message": "Volume badha diya."}
+            pyautogui.press("up")
+        return {"status": "success", "message": "Gaane ki volume badha di."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
 def media_volume_down(steps: int = 5) -> Dict[str, str]:
-    """Decrease system volume."""
+    """Decrease the VIDEO/TAB volume (YouTube player), not the system volume.
+    YouTube maps the Down arrow to -5% player volume when the player is focused."""
     try:
         steps = min(int(steps), 10)
+        _focus_browser()
         for _ in range(steps):
-            pyautogui.press("volumedown")
-        return {"status": "success", "message": "Volume kam kar diya."}
+            pyautogui.press("down")
+        return {"status": "success", "message": "Gaane ki volume kam kar di."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

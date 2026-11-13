@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 # ── Models ─────────────────────────────────────────────────────────────────
 
-_GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+_GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 _GITHUB_MODEL = os.getenv("GITHUB_MODEL", "gpt-4o-mini")
 _OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 class LLMResponse(BaseModel):
@@ -56,7 +56,13 @@ class LLMClient:
         self._build_providers()
 
     def _build_providers(self) -> None:
-        # Groq — fastest, free tier 14400 req/day
+        # Gemini first — most reliable, no strict TPM cap
+        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if gemini_key:
+            self._providers.append(("gemini", gemini_key, _GEMINI_MODEL))
+            logger.debug("[LLM] Gemini ready")
+
+        # Groq — fast but 8000 TPM cap
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
         if groq_key:
             try:
@@ -89,12 +95,6 @@ class LLMClient:
                 logger.debug("[LLM] GitHub Models ready")
             except Exception as e:
                 logger.warning("[LLM] GitHub init failed: %s", e)
-
-        # Gemini — via native SDK (no tool_calling path in older SDK)
-        gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-        if gemini_key:
-            self._providers.append(("gemini", gemini_key, _GEMINI_MODEL))
-            logger.debug("[LLM] Gemini ready")
 
         if self._providers:
             logger.info("[LLM] Providers: %s", ", ".join(n for n, _, _ in self._providers))
@@ -135,7 +135,31 @@ class LLMClient:
                     logger.debug("[LLM] %s responded in %dms", provider_name, result.latency_ms)
                     return result
             except Exception as exc:
-                logger.warning("[LLM] %s failed: %s", provider_name, exc)
+                exc_str = str(exc)
+                # 503 = server overloaded — skip immediately, no retry
+                if "503" in exc_str:
+                    logger.warning("[LLM] %s overloaded (503), skipping", provider_name)
+                    continue
+                # On 429 rate-limit: parse retry-after and wait if <= 15s
+                if "429" in exc_str and "try again in" in exc_str.lower():
+                    import re as _re
+                    m = _re.search(r"try again in ([\d.]+)", exc_str, _re.IGNORECASE)
+                    wait = float(m.group(1)) if m else 3.0
+                    if wait <= 15.0:
+                        logger.info("[LLM] %s rate-limited, waiting %.1fs...", provider_name, wait)
+                        time.sleep(wait + 0.5)
+                        try:
+                            result = self._call_provider(
+                                provider_name, client, model,
+                                full_messages, tools, temperature, max_tokens,
+                            )
+                            if result:
+                                result.latency_ms = int((time.time() - start) * 1000)
+                                result.provider = provider_name
+                                return result
+                        except Exception as exc2:
+                            logger.warning("[LLM] %s retry failed: %s", provider_name, exc2)
+                logger.warning("[LLM] %s failed: %s", provider_name, exc_str[:120])
 
         return LLMResponse(content="Abhi AI unavailable hai, thodi der mein try karo.")
 

@@ -21,8 +21,11 @@ Flow:
 """
 
 import base64
+import io
 import json
 import logging
+import os
+import struct
 import threading
 import time
 from typing import Callable, Optional
@@ -229,8 +232,10 @@ class VoiceInput:
             duration = len(audio_float) / SAMPLE_RATE
             logger.info(f"Recording done: {duration:.1f}s, sending to STT...")
 
-            # Send to Google STT
-            result = self._google_stt(pcm_bytes)
+            # Groq Whisper primary → Google STT fallback
+            result = self._groq_whisper_stt(pcm_bytes)
+            if result is None:
+                result = self._google_stt(pcm_bytes)
             if result is None:
                 self.last_error = ERROR_MESSAGES["no_speech"]
             return result
@@ -402,66 +407,88 @@ class VoiceInput:
 
         return all_chunks
 
+    @staticmethod
+    def _pcm_to_wav(pcm_bytes: bytes) -> bytes:
+        """Wrap raw int16 PCM in a minimal WAV header."""
+        n = len(pcm_bytes)
+        buf = io.BytesIO()
+        buf.write(b"RIFF")
+        buf.write(struct.pack("<I", 36 + n))
+        buf.write(b"WAVE")
+        buf.write(b"fmt ")
+        buf.write(struct.pack("<IHHIIHH", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16))
+        buf.write(b"data")
+        buf.write(struct.pack("<I", n))
+        buf.write(pcm_bytes)
+        return buf.getvalue()
+
+    def _groq_whisper_stt(self, pcm_bytes: bytes) -> Optional[str]:
+        """Groq Whisper STT — multilingual, free, handles Hindi/English/Marathi."""
+        groq_key = os.getenv("GROQ_API_KEY", "").strip()
+        if not groq_key:
+            return None
+
+        wav_data = self._pcm_to_wav(pcm_bytes)
+
+        try:
+            # FORCE Hindi: without language=, Whisper auto-detects and keeps
+            # mis-reading Hinglish as Urdu/Arabic script (same phonetics, wrong
+            # script) — e.g. "time kya hua hai" → "ٹائم کیا ہوا ہے؟". Pinning
+            # language="hi" guarantees Devanagari output, which the TTS language
+            # detector then routes correctly to hi-IN. The Devanagari prompt
+            # anchors the script and the assistant's name so it stays consistent.
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {groq_key}"},
+                files={"file": ("audio.wav", wav_data, "audio/wav")},
+                data={
+                    "model": "whisper-large-v3-turbo",
+                    "response_format": "json",
+                    "language": "hi",
+                    "prompt": "श्वेता से हिंदी और हिंग्लिश में बातचीत। जैसे: गाना चला दो, टाइम क्या हुआ है, न्यूज़ सुनाओ।",
+                    "temperature": "0",
+                },
+                timeout=STT_TIMEOUT + 2,
+            )
+            if resp.status_code == 200:
+                text = resp.json().get("text", "").strip()
+                if text:
+                    logger.info(f"[Whisper] Recognized: {text}")
+                    return text
+            else:
+                logger.warning(f"[Whisper] HTTP {resp.status_code}: {resp.text[:120]}")
+        except Exception as e:
+            logger.warning(f"[Whisper] Failed: {e}")
+        return None
+
     def _google_stt(self, pcm_bytes: bytes) -> Optional[str]:
-        """
-        Send PCM audio to Google Speech-to-Text API.
-        Hard timeout: 8 seconds per request.
-
-        Args:
-            pcm_bytes: Raw int16 PCM audio bytes.
-
-        Returns:
-            Recognized text or None.
-        """
+        """Google STT fallback with multilingual support."""
         audio_b64 = base64.b64encode(pcm_bytes).decode("utf-8")
 
         body = {
             "config": {
                 "encoding": "LINEAR16",
                 "sampleRateHertz": SAMPLE_RATE,
-                "languageCode": "en-IN",
+                "languageCode": "hi-IN",
+                "alternativeLanguageCodes": ["en-IN", "mr-IN"],
                 "enableAutomaticPunctuation": False,
             },
-            "audio": {
-                "content": audio_b64
-            }
+            "audio": {"content": audio_b64},
         }
 
         url = f"{GOOGLE_STT_URL}?key={GOOGLE_STT_KEY}"
 
         try:
             resp = requests.post(url, json=body, timeout=STT_TIMEOUT)
-
             if resp.status_code == 200:
                 text = self._extract_transcript(resp.json())
                 if text:
-                    logger.info(f"Recognized: {text}")
+                    logger.info(f"[Google STT] Recognized: {text}")
                     return text
-            elif resp.status_code == 403:
-                self.last_error = ERROR_MESSAGES["stt_api_error"]
-                logger.error(f"Google STT API key invalid/quota exceeded: {resp.status_code}")
-                return None
-            elif resp.status_code >= 500:
-                self.last_error = ERROR_MESSAGES["stt_api_error"]
-                logger.error(f"Google STT server error: {resp.status_code}")
-                return None
             else:
-                logger.warning(f"Google STT HTTP {resp.status_code}: {resp.text[:100]}")
-
-        except requests.Timeout:
-            self.last_error = ERROR_MESSAGES["stt_timeout"]
-            logger.error("Google STT timeout.")
-            return None
-        except requests.ConnectionError:
-            self.last_error = ERROR_MESSAGES["stt_timeout"]
-            logger.error("Google STT connection failed — no internet?")
-            return None
+                logger.warning(f"[Google STT] HTTP {resp.status_code}: {resp.text[:100]}")
         except Exception as e:
-            self.last_error = ERROR_MESSAGES["stt_api_error"]
-            logger.error(f"STT error: {e}")
-            return None
-
-        logger.info("Could not understand audio.")
+            logger.warning(f"[Google STT] Failed: {e}")
         return None
 
     @staticmethod

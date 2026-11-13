@@ -7,7 +7,7 @@ import logging
 import os
 import platform
 import subprocess
-from typing import Dict
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,19 +17,36 @@ OS_NAME = platform.system()
 
 def open_notepad() -> Dict[str, str]:
     """
-    Open a text editor (Notepad on Windows, gedit on Linux).
-
-    Returns:
-        Result dictionary.
+    Open Notepad — if already running, focus the existing window instead of opening a new one.
     """
     try:
         if OS_NAME == "Windows":
-            subprocess.Popen("notepad.exe")
+            import psutil, win32gui, win32con
+            # Check if notepad is already running
+            notepad_pid = None
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'] and proc.info['name'].lower() == 'notepad.exe':
+                    notepad_pid = proc.info['pid']
+                    break
+
+            if notepad_pid:
+                # Focus the existing notepad window
+                def _focus(hwnd, _):
+                    if win32gui.IsWindowVisible(hwnd):
+                        _, pid = win32gui.GetWindowThreadProcessId(hwnd)
+                        if pid == notepad_pid:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.SetForegroundWindow(hwnd)
+                win32gui.EnumWindows(_focus, None)
+                logger.info("Notepad already open — focused existing window.")
+                return {"status": "success", "message": "Notepad pehle se khula hai, focus kar diya."}
+            else:
+                subprocess.Popen("notepad.exe")
+                logger.info("Notepad opened.")
+                return {"status": "success", "message": "Notepad khol diya."}
         elif OS_NAME == "Linux":
             subprocess.Popen(["gedit"])
-
-        logger.info("Notepad/text editor opened.")
-        return {"status": "success", "message": "Notepad khol diya."}
+            return {"status": "success", "message": "Text editor khol diya."}
     except Exception as e:
         logger.error(f"Failed to open notepad: {e}")
         return {"status": "error", "message": str(e)}
@@ -173,6 +190,37 @@ def close_app(app_name: str) -> Dict[str, str]:
         return {"status": "error", "message": str(e)}
 
 
+def _find_start_menu_shortcut(app_lower: str) -> Optional[str]:
+    """Find the best-matching .lnk in the Windows Start Menu for an app name.
+    Searches both the all-users and per-user Start Menu Programs folders."""
+    search_dirs = [
+        os.path.join(os.environ.get("ProgramData", ""), r"Microsoft\Windows\Start Menu\Programs"),
+        os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs"),
+    ]
+    exact = None
+    partial = []  # (score, path)
+    for base in search_dirs:
+        if not base or not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base):
+            for fname in files:
+                if not fname.lower().endswith(".lnk"):
+                    continue
+                stem = os.path.splitext(fname)[0].lower()
+                full = os.path.join(root, fname)
+                if stem == app_lower:
+                    return full  # perfect match wins immediately
+                if "uninstall" in stem or "readme" in stem or "help" in stem:
+                    continue
+                if app_lower in stem or stem in app_lower:
+                    # prefer shorter names (closer to the query) and app-like names
+                    partial.append((len(stem), full))
+    if partial:
+        partial.sort(key=lambda x: x[0])
+        return partial[0][1]
+    return exact
+
+
 def open_app(app_name: str) -> Dict[str, str]:
     """
     Open any application by name. Tries multiple methods.
@@ -228,18 +276,36 @@ def open_app(app_name: str) -> Dict[str, str]:
                     os.startfile(command)
                 except Exception:
                     subprocess.Popen(command, shell=True)
-            else:
-                import pyautogui
-                import time
-                # Fallback: Simulate user opening start menu and typing app name
-                pyautogui.press('win')
-                time.sleep(0.5)
-                pyautogui.write(app_name)
-                time.sleep(0.5)
-                pyautogui.press('enter')
+                logger.info(f"Opened app: {app_name}")
+                return {"status": "success", "message": f"{app_name} khol diya."}
 
-            logger.info(f"Opened app: {app_name}")
-            return {"status": "success", "message": f"{app_name} khol diya."}
+            # Unknown app → find its Start Menu shortcut and launch it directly.
+            # This reliably opens installed apps (Steam, Discord, VS Code, games…)
+            # instead of blindly typing into the Start menu and hoping.
+            shortcut = _find_start_menu_shortcut(app_lower)
+            if shortcut:
+                os.startfile(shortcut)
+                logger.info(f"Launched via shortcut: {shortcut}")
+                return {"status": "success", "message": f"{app_name} khol diya."}
+
+            # Try the Windows 'start' resolver (App Paths / PATH, e.g. steam, code).
+            try:
+                subprocess.Popen(f'start "" "{app_lower}"', shell=True)
+                logger.info(f"Launched via start: {app_name}")
+                return {"status": "success", "message": f"{app_name} khol diya."}
+            except Exception:
+                pass
+
+            # Last resort: Start-menu search typing (with enough time to populate).
+            import pyautogui
+            import time
+            pyautogui.press('win')
+            time.sleep(0.8)
+            pyautogui.write(app_name, interval=0.03)
+            time.sleep(1.0)
+            pyautogui.press('enter')
+            logger.info(f"Tried Start-menu search for: {app_name}")
+            return {"status": "success", "message": f"{app_name} dhundh ke khol rahi hoon."}
 
         elif OS_NAME == "Linux":
             subprocess.Popen([app_name.lower()])

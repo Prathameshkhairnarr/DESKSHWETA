@@ -1,4 +1,4 @@
-"""
+﻿"""
 Email Skill for Shweta AI Desktop Assistant.
 Sends professional emails via Gmail API on user's behalf.
 
@@ -142,7 +142,7 @@ Output format (JSON only):
             from google.genai import types
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash-lite",
                 contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=200)
             )
@@ -170,7 +170,7 @@ def send_email(to_email: str, reason: str, to_name: str = "HR") -> Dict[str, str
     Supports multiple recipients (comma-separated).
 
     Args:
-        to_email: Recipient email(s) — comma separated for multiple.
+        to_email: Recipient email(s) â€” comma separated for multiple.
         reason: Reason/context for the email (AI will draft professional content).
         to_name: Recipient name (for greeting).
     """
@@ -236,3 +236,4 @@ def send_email_to_contact(contact: str, reason: str) -> Dict[str, str]:
         return {"status": "error", "message": f"'{contact}' ka email set nahi hai. .env mein EMAIL_HR, EMAIL_MANAGER add karo."}
 
     return send_email(to_email=email, reason=reason, to_name=contact.title())
+

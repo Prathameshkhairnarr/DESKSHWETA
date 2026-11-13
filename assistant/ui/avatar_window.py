@@ -526,17 +526,13 @@ class AvatarWindow(QMainWindow):
                 self._trigger_reaction(settle_type)
 
     def _on_idle_bored(self) -> None:
-        """Called after 10 minutes of no interaction."""
-        from assistant.skills.reaction_lines import get_reaction_lines
-        burst, _ = get_reaction_lines("idle_bored")
-        self.show_chat_bubble(burst, 5.0)
-        self.set_emotion("sad", 0.4)
-        if self._speak_reaction_fn:
-            try:
-                self._speak_reaction_fn(burst)
-            except Exception:
-                pass
-        # Restart idle timer for next bored reaction
+        """Called after long inactivity — stays professional: a calm, SILENT
+        micro-expression only. Shweta never whines about being bored."""
+        try:
+            self.trigger_micro_expression("relaxed", 0.4, 3.0)
+        except Exception:
+            pass
+        # Keep the timer alive for the next subtle cue
         self._idle_timer.start(600000)
 
     # ========== MOUSE EVENTS (click = mic, drag from top bar) ==========

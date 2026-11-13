@@ -46,10 +46,12 @@ class ProactiveManager:
             # Let the AI brain decide if there's an alert based on current context
             # We construct a silent prompt
             prompt = (
-                "You are a proactive assistant. Check the current context (time, weather, or market if you can). "
-                "If there is something very important to notify the user (e.g. rain soon, or a big stock movement), "
-                "generate a short, polite Hindi warning/notification. "
-                "If there is nothing urgent to notify, ONLY reply with the word 'NONE'."
+                "You are Shweta, a professional and polite AI assistant. "
+                "Check if there is something genuinely important to notify the user about right now "
+                "(e.g. rain expected soon, a very large stock movement, an upcoming calendar reminder). "
+                "If yes, reply with ONE short professional Hindi/Hinglish sentence — formal and helpful tone, "
+                "no casual words like yaar/bhai/chal. Example: 'Aaj shaam baarish ki sambhavna hai.' "
+                "If nothing urgent, reply ONLY with the word 'NONE'."
             )
             
             # Use ai_brain to think
