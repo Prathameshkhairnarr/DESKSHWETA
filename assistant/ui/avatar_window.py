@@ -406,8 +406,15 @@ class AvatarWindow(QMainWindow):
             self._trigger_reaction(shake)
             return
 
-        # Check direction (only if not shaking)
-        direction = self._detect_direction(dx, dy)
+        # Check direction from NET recent movement, not a single event. While
+        # dragging, each move event's dx/dy is tiny, so a single-event threshold
+        # missed slow drags (left reactions never fired). Summing the last ~0.4s
+        # makes left/right/up/down all trigger reliably.
+        now = time.time()
+        recent = [(t, ddx, ddy) for (t, ddx, ddy) in self._move_history if now - t < 0.4]
+        net_dx = sum(ddx for _, ddx, _ in recent)
+        net_dy = sum(ddy for _, ddy, _ in recent)
+        direction = self._detect_direction(net_dx, net_dy)
         if direction:
             self._trigger_reaction(direction)
 
@@ -475,13 +482,13 @@ class AvatarWindow(QMainWindow):
 
         # Set emotion
         emotion_map = {
-            "left": "surprised",
+            "left": "curious",
             "right": "happy",
-            "up": "surprised",
-            "down": "sad",
+            "up": "happy",
+            "down": "relaxed",
             "medium_shake": "surprised",
             "fast_shake": "surprised",
-            "very_fast_shake": "angry",
+            "very_fast_shake": "surprised",
             "settle_slow": "relaxed",
             "settle_fast": "relaxed",
         }
@@ -495,9 +502,11 @@ class AvatarWindow(QMainWindow):
         # Show chat bubble
         self.show_chat_bubble(burst_line, 3.0)
 
-        # Speak burst immediately
+        # Speak burst immediately — pass the emotion so the VOICE matches the face.
         if self._speak_reaction_fn and burst_line:
             try:
+                self._speak_reaction_fn(burst_line, emotion)
+            except TypeError:
                 self._speak_reaction_fn(burst_line)
             except Exception:
                 pass
@@ -508,6 +517,8 @@ class AvatarWindow(QMainWindow):
                 self.show_chat_bubble(followup_line, 3.0)
                 if self._speak_reaction_fn:
                     try:
+                        self._speak_reaction_fn(followup_line, emotion)
+                    except TypeError:
                         self._speak_reaction_fn(followup_line)
                     except Exception:
                         pass

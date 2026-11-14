@@ -101,8 +101,10 @@ class ShwetaAssistant:
         # Connect lip sync: voice_output → avatar
         self.voice_output.set_lip_sync_callback(self._on_lip_sync)
 
-        # Connect window shake reactions to voice output (with intensity)
-        self.ui.set_speak_reaction_fn(lambda text: self.voice_output.speak_reaction(text))
+        # Connect window shake reactions to voice output (with emotion for voice style)
+        self.ui.set_speak_reaction_fn(
+            lambda text, emotion=None: self.voice_output.speak_reaction(text, emotion=emotion)
+        )
 
         # Connect music vibe to avatar
         self.desktop_control.set_music_vibe_callback(self._on_music_vibe)
@@ -333,6 +335,128 @@ class ShwetaAssistant:
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
             self.ui.schedule(self.ui.set_text, "Kuch gadbad hui, phir try karo.")
 
+    # ==================================================================
+    # Phase B — interactive slot-filling for order_food / book_flight
+    # Shweta asks for the missing bits (provider, item, route), remembers
+    # the answers across turns, then runs the action.
+    # ==================================================================
+    def _detect_provider(self, text: str):
+        """Detect a food provider from speech (roman or Devanagari)."""
+        t = (text or "").lower()
+        if "zomato" in t or "zomato" in t or "ज़ोमैटो" in text or "जोमैटो" in text or "जोमाटो" in text:
+            return "Zomato"
+        if "swiggy" in t or "swigy" in t or "स्विगी" in text or "स्विग्गी" in text:
+            return "Swiggy"
+        return None
+
+    def _ask_user(self, question: str) -> None:
+        """Speak a follow-up question to the user and show it on the avatar."""
+        try:
+            self.ui.schedule(self.ui.set_emotion, "curious", 0.7)
+            self.ui.schedule(self.ui.show_chat_bubble, question, 6.0)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+        except Exception:
+            pass
+        try:
+            voice = self.desktop_control.language.get_voice()
+            self.voice_output.speak(question, voice=voice)
+        except Exception:
+            try:
+                self.voice_output.speak(question)
+            except Exception:
+                pass
+
+    def _slot_question(self, action: str, slot: str) -> str:
+        if action == "order_food":
+            if slot == "provider":
+                return "Kaunse platform se — Swiggy ya Zomato?"
+            if slot == "item":
+                return "Kya order karna hai?"
+        if action == "book_flight":
+            if slot == "route":
+                return "Kahaan se kahaan ki flight? Jaise Nashik se Mumbai."
+        return "Thoda aur detail batao."
+
+    def _maybe_start_slot_fill(self, action: str, params: dict, text: str) -> bool:
+        """If required info is missing, ask the user and enter pending mode.
+        Returns True when a question was asked (caller should NOT execute yet)."""
+        import re
+        if action == "order_food":
+            q = str(params.get("query", "")).strip()
+            prov = self._detect_provider(q) or self._detect_provider(text)
+            core = q
+            for w in ("swiggy", "zomato"):
+                core = re.sub(w, "", core, flags=re.I)
+            core = core.strip(" .,-|")
+            item = q.strip() if len(core) >= 3 else None
+            slots = {"provider": prov, "item": item}
+            need = ["provider", "item"]
+            missing = [s for s in need if not slots.get(s)]
+            if not missing:
+                return False
+            self._pending_slot = {"action": action, "slots": slots, "need": need}
+            self._ask_user(self._slot_question(action, missing[0]))
+            return True
+        if action == "book_flight":
+            q = str(params.get("query", "")).strip()
+            has_route = bool(re.search(r'(\bse\b|\bto\b|से|\bfrom\b)', q, flags=re.I)) and len(q.split()) >= 3
+            if has_route:
+                return False
+            self._pending_slot = {"action": action, "slots": {"route": None}, "need": ["route"]}
+            self._ask_user(self._slot_question(action, "route"))
+            return True
+        return False
+
+    def _handle_pending_slot(self, text: str) -> bool:
+        """If we're mid-conversation filling slots, treat this utterance as the
+        answer. Returns True if it was consumed (don't route to the brain)."""
+        ps = getattr(self, "_pending_slot", None)
+        if not ps:
+            return False
+        t = (text or "").strip()
+        tl = t.lower()
+        # explicit cancel
+        if any(w in tl for w in ("cancel", "rehne do", "rhne do", "chhodo", "chodo", "kainsil")) \
+                or "रहने दो" in t or "छोड़ो" in t or "कैंसल" in t:
+            self._pending_slot = None
+            self._ask_user("Theek hai, rehne deti hoon.")
+            return True
+
+        slots = ps["slots"]
+        need = ps["need"]
+        action = ps["action"]
+        cur = next((s for s in need if not slots.get(s)), None)
+        if cur == "provider":
+            slots["provider"] = self._detect_provider(t) or ("Zomato" if "zomato" in tl else "Swiggy")
+        elif cur == "item":
+            slots["item"] = t
+        elif cur == "route":
+            slots["route"] = t
+
+        nxt = next((s for s in need if not slots.get(s)), None)
+        if nxt:
+            self._ask_user(self._slot_question(action, nxt))
+            return True
+
+        # All slots filled → build params and run the action.
+        self._pending_slot = None
+        if action == "order_food":
+            prov = slots.get("provider", "")
+            item = slots.get("item", "")
+            params = {"query": f"{prov} {item}".strip()}
+            self._ask_user(f"{prov} pe {item} dhoondh rahi hoon, cart tak le jaake browser khula chhod dungi. Payment aap karna.")
+        elif action == "book_flight":
+            params = {"query": slots.get("route", "")}
+            self._ask_user(f"{slots.get('route','')} ki flights dekh rahi hoon. Booking aap karna.")
+        else:
+            params = {}
+        try:
+            result = self.desktop_control.execute(action, params)
+            logger.info(f"[SlotFill] {action} executed → {result}")
+        except Exception as e:
+            logger.warning(f"[SlotFill] {action} execute failed: {e}")
+        return True
+
     def _process_input(self, text: str) -> None:
         """
         Process user input through AI brain and execute actions.
@@ -347,6 +471,12 @@ class ShwetaAssistant:
         self._is_processing = True
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
         self.ui.schedule(self.ui.show_typing_bubble)
+
+        # Phase B: if we're waiting for the user to fill in provider/item/route,
+        # THIS utterance is their answer — handle it, don't route to the brain.
+        if self._handle_pending_slot(text):
+            self._is_processing = False
+            return
 
         # Check for special commands
         if self._handle_special_commands(text):
@@ -400,6 +530,12 @@ class ShwetaAssistant:
         if not isinstance(emotion, str):
             emotion = "neutral"
 
+        # Phase B: order_food / book_flight need provider + item (or route). If the
+        # brain didn't supply them, ask the user instead of running a half-baked search.
+        if action in ("order_food", "book_flight") and self._maybe_start_slot_fill(action, params, text):
+            self._is_processing = False
+            return
+
         # FALLBACK: If AI promised to play music in reply but didn't send action
         if (action == "none" or not action) and reply:
             reply_lower = reply.lower()
@@ -430,6 +566,11 @@ class ShwetaAssistant:
         # Set avatar emotion based on AI response
         if emotion:
             self.ui.schedule(self.ui.set_emotion, emotion, 0.8 if emotion != "neutral" else 0.0)
+            # Match the VOICE style to the emotion too (happy sounds cheerful, etc.)
+            try:
+                self.voice_output.set_emotion_hint(emotion)
+            except Exception:
+                pass
             # Track mood for learning
             try:
                 self.desktop_control.learner.track_mood(emotion)
@@ -957,6 +1098,30 @@ class ShwetaAssistant:
     def run(self) -> None:
         """Start the assistant (blocks on PyQt5 main loop)."""
         logger.info(f"{ASSISTANT_NAME} is ready!")
+
+        # Launch greeting: the avatar auto-plays a peek + hand wave on load (viewer.html);
+        # here we add a warm spoken hello shortly after, in a happy voice, so the wave
+        # and the greeting land together.
+        try:
+            from PyQt5.QtCore import QTimer
+
+            def _launch_greeting():
+                try:
+                    self.ui.set_emotion("happy", 0.9)
+                except Exception:
+                    pass
+                try:
+                    self.voice_output.speak(
+                        "नमस्ते! मैं श्वेता हूँ, आपकी मदद के लिए तैयार।",
+                        emotion="happy",
+                    )
+                except Exception:
+                    pass
+
+            QTimer.singleShot(1800, _launch_greeting)
+        except Exception:
+            pass
+
         self.ui.run()
 
         # Cleanup on exit

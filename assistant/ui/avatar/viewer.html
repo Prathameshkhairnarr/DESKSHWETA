@@ -255,6 +255,8 @@
         let musicVibing = false;
         let lookTarget; // dummy target for eye tracking
         let hairJoints = []; // hair spring-bone joints + per-strand phase for the breeze effect
+        let greetingActive = false;   // launch peek + hand-wave greeting
+        let greetingStart = 0;
 
         // === EMOTION SYSTEM ===
         let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed, think, curious, wink, joy, fun, pout, bored, sleepy
@@ -392,6 +394,8 @@
                         });
 
                         console.log('VRM loaded!');
+                        // Cute launch greeting: a little peek-in + hand wave, once.
+                        setTimeout(() => { try { window.playLaunchGreeting(); } catch (e) {} }, 700);
                     } else {
                         document.getElementById('error').style.display = 'block';
                     }
@@ -775,19 +779,51 @@
                     //  it kept twisting the arm. Thinking reads from the head tilt + eyes-up
                     //  instead; playful reads from the bounce. Clean beats a broken arm.)
                     const armLerp = 2.5;
-                    if (lArm) lArm.rotation.z = THREE.MathUtils.lerp(lArm.rotation.z, -1.35, delta * armLerp);
-                    if (rArm) {
-                        rArm.rotation.z = THREE.MathUtils.lerp(rArm.rotation.z, 1.35, delta * armLerp);
-                        rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, delta * armLerp);
-                    }
-                    if (rElbow) {
-                        rElbow.rotation.x = THREE.MathUtils.lerp(rElbow.rotation.x, 0, delta * armLerp);
-                        rElbow.rotation.y = THREE.MathUtils.lerp(rElbow.rotation.y, 0, delta * armLerp);
-                        rElbow.rotation.z = THREE.MathUtils.lerp(rElbow.rotation.z, 0, delta * armLerp);
+                    if (greetingActive) {
+                        // === LAUNCH GREETING: peek + hand wave ===
+                        const gt = clock.elapsedTime - greetingStart;
+                        // WAVE: raise the right arm up/out (z only — safe swing axis, no
+                        // rotation.x which twisted the arm before) and oscillate it.
+                        const ramp = THREE.MathUtils.clamp(gt / 0.5, 0, 1);
+                        const waveZ = 0.3 - Math.sin(gt * 9.0) * 0.22 * ramp;  // raised + waving
+                        if (rArm) {
+                            rArm.rotation.z = THREE.MathUtils.lerp(rArm.rotation.z, waveZ, delta * 9);
+                            rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, delta * 9);
+                        }
+                        if (rElbow) {
+                            rElbow.rotation.z = THREE.MathUtils.lerp(rElbow.rotation.z, -0.35, delta * 7);
+                            rElbow.rotation.x = THREE.MathUtils.lerp(rElbow.rotation.x, 0, delta * 7);
+                            rElbow.rotation.y = THREE.MathUtils.lerp(rElbow.rotation.y, 0, delta * 7);
+                        }
+                        if (lArm) lArm.rotation.z = THREE.MathUtils.lerp(lArm.rotation.z, -1.35, delta * armLerp);
+                        if (gt > 3.0) greetingActive = false;  // done → back to rest
+                    } else {
+                        if (lArm) lArm.rotation.z = THREE.MathUtils.lerp(lArm.rotation.z, -1.35, delta * armLerp);
+                        if (rArm) {
+                            rArm.rotation.z = THREE.MathUtils.lerp(rArm.rotation.z, 1.35, delta * armLerp);
+                            rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, delta * armLerp);
+                        }
+                        if (rElbow) {
+                            rElbow.rotation.x = THREE.MathUtils.lerp(rElbow.rotation.x, 0, delta * armLerp);
+                            rElbow.rotation.y = THREE.MathUtils.lerp(rElbow.rotation.y, 0, delta * armLerp);
+                            rElbow.rotation.z = THREE.MathUtils.lerp(rElbow.rotation.z, 0, delta * armLerp);
+                        }
                     }
 
-                    // Playful: light full-body bounce (whole avatar hops gently).
-                    if (currentEmotion === 'playful') {
+                    // Launch PEEK: avatar pops up from slightly below with a little
+                    // overshoot, like a cute peek-in. (Safe — position only.)
+                    if (greetingActive) {
+                        const gt = clock.elapsedTime - greetingStart;
+                        let peekY;
+                        if (gt < 0.45) {
+                            peekY = THREE.MathUtils.lerp(-0.18, 0.04, gt / 0.45);   // rise with overshoot
+                        } else if (gt < 0.75) {
+                            peekY = THREE.MathUtils.lerp(0.04, 0.0, (gt - 0.45) / 0.3); // settle
+                        } else {
+                            peekY = 0.0;
+                        }
+                        vrm.scene.position.y = peekY;
+                    } else if (currentEmotion === 'playful') {
                         const bounce = Math.abs(Math.sin(clock.elapsedTime * 5.0)) * 0.018 * emotionIntensity;
                         vrm.scene.position.y = bounce;
                     } else {
@@ -1307,6 +1343,16 @@
         // === WINDOW SHAKE/DRAG REACTION ANIMATIONS ===
         let reactionAnimId = null;
         let reactionStartTime = 0;
+
+        window.playLaunchGreeting = function () {
+            // Cute launch greeting: peek-in (handled in the render loop) + hand wave,
+            // with a happy face. Runs for ~3s then arms return to rest.
+            try {
+                greetingActive = true;
+                greetingStart = clock.elapsedTime;
+                if (window.setEmotion) window.setEmotion('happy', 0.9);
+            } catch (e) {}
+        };
 
         window.setReactionAnimation = function (type) {
             // Cancel any ongoing reaction animation

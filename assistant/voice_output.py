@@ -55,6 +55,18 @@ MURF_FALCON_ENDPOINTS = [
     "https://global.api.murf.ai/v1/speech/stream",  # Global router endpoint
 ]
 
+# Emotion → Murf voice STYLE. Pooja supports these styles, so matching the voice
+# style to the reply's emotion makes Shweta sound genuinely happy/sad/excited
+# instead of the same flat Conversational tone every time (the "words mein koi
+# emotion nahi" problem). Unknown emotions fall back to the default style.
+EMOTION_TO_MURF_STYLE = {
+    "happy": "Cheerful", "joy": "Excited", "fun": "Cheerful", "playful": "Cheerful",
+    "mast": "Cheerful", "excited": "Excited", "surprised": "Excited", "wink": "Cheerful",
+    "curious": "Conversational", "think": "Calm",
+    "sad": "Sad", "pout": "Sad", "bored": "Calm", "sleepy": "Calm",
+    "relaxed": "Calm", "calm": "Calm", "angry": "Angry", "neutral": "Conversational",
+}
+
 # --- Amazon Polly TTS Configuration (FALLBACK) ---
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
@@ -237,6 +249,7 @@ class VoiceOutput:
 
     def __init__(self) -> None:
         self.is_speaking: bool = False
+        self._current_emotion: str = "neutral"  # drives the Murf voice style
         self._speak_lock = threading.Lock()
         self._interrupt_event = threading.Event()
         self._murf_available: bool = False
@@ -305,16 +318,31 @@ class VoiceOutput:
         """Set callback for lip sync. Called with volume (0.0-1.0) at ~30fps."""
         self._lip_sync_callback = callback
 
+    def set_emotion_hint(self, emotion: Optional[str]) -> None:
+        """Tell the voice which emotion the next reply carries, so the Murf voice
+        style matches (happy sounds cheerful, sad sounds sad, etc.)."""
+        self._current_emotion = (emotion or "neutral").strip().lower() or "neutral"
+
+    def _style_for_emotion(self, emotion: Optional[str] = None) -> str:
+        """Map an emotion to a Murf voice style (falls back to the default style)."""
+        key = (emotion if emotion is not None else self._current_emotion or "neutral").strip().lower()
+        return EMOTION_TO_MURF_STYLE.get(key, MURF_STYLE)
+
     def speak(self, text: str, language: Optional[str] = None,
-              voice: Optional[str] = None, callback: Optional[Callable] = None) -> None:
+              voice: Optional[str] = None, callback: Optional[Callable] = None,
+              emotion: Optional[str] = None) -> None:
         """
         Speak text. Interrupts any current speech first.
         Priority: cache (instant) → Polly Generative → Polly Neural → pyttsx3.
+        `emotion` picks the Murf voice style so the delivery matches the mood.
         """
         if not text:
             if callback:
                 callback()
             return
+
+        if emotion is not None:
+            self.set_emotion_hint(emotion)
 
         # Interrupt current speech if any
         self._interrupt()
@@ -344,10 +372,14 @@ class VoiceOutput:
             return True
         return False
 
-    def speak_reaction(self, text: str, intensity: str = "normal") -> None:
-        """Speak reaction with Polly. Falls back to pyttsx3 if Polly unavailable."""
+    def speak_reaction(self, text: str, intensity: str = "normal",
+                       emotion: Optional[str] = None) -> None:
+        """Speak a reaction line. `emotion` sets the Murf voice style so window-move
+        reactions actually sound happy/surprised/sad instead of flat."""
         if not text:
             return
+        if emotion is not None:
+            self.set_emotion_hint(emotion)
         self._interrupt()
         thread = threading.Thread(
             target=self._speak_reaction_impl,
@@ -806,17 +838,18 @@ class VoiceOutput:
             chunks.append(buf)
         return chunks
 
-    def _murf_request_bytes(self, payload_text: str, locale: str):
+    def _murf_request_bytes(self, payload_text: str, locale: str, style: Optional[str] = None):
         """Synthesize a single chunk with Murf Falcon 2.1 and return raw MP3 bytes
         (no playback). Tries the low-latency streaming endpoints, then the SDK.
-        Returns None on failure or interrupt."""
+        `style` picks the emotional voice style. Returns None on failure/interrupt."""
         if self._interrupt_event.is_set():
             return None
         import requests
+        style = style or MURF_STYLE
         headers = {"api-key": MURF_API_KEY, "Content-Type": "application/json"}
         payload = {
             "voiceId": MURF_VOICE_ID,
-            "style": MURF_STYLE,
+            "style": style,
             "model": MURF_MODEL,
             "locale": locale,
             "text": payload_text,
@@ -840,7 +873,7 @@ class VoiceOutput:
                 res = self._murf_client.text_to_speech.generate(
                     text=payload_text,
                     voice_id=MURF_VOICE_ID,
-                    style=MURF_STYLE,
+                    style=style,
                     locale=locale,
                     model_version="GEN2",
                     format=MURF_FORMAT,
@@ -862,7 +895,7 @@ class VoiceOutput:
                 logger.debug(f"[TTS] Murf SDK fallback failed: {sdk_err}")
         return None
 
-    def _speak_murf_streaming(self, text: str, chunks, locale: str, convert_dev: bool) -> bool:
+    def _speak_murf_streaming(self, text: str, chunks, locale: str, convert_dev: bool, style: Optional[str] = None) -> bool:
         """STREAMING TTS (Phase 1.5): synthesize sentence chunks in a background
         producer thread while the current thread plays each chunk the moment it's
         ready. The first words are heard in ~0.5-1s instead of after the WHOLE
@@ -883,7 +916,7 @@ class VoiceOutput:
                     if self._interrupt_event.is_set():
                         break
                     payload_text = to_devanagari(ch) if convert_dev else ch
-                    audio = self._murf_request_bytes(payload_text, locale)
+                    audio = self._murf_request_bytes(payload_text, locale, style)
                     if self._interrupt_event.is_set():
                         break
                     if audio:
@@ -946,8 +979,9 @@ class VoiceOutput:
         # replies fall through to the direct single-shot path below.
         _locale, _convert_dev = self._murf_prepare(clean)
         _chunks = self._split_tts_chunks(clean)
+        _style = self._style_for_emotion()  # emotional voice from the current emotion
         if len(_chunks) >= 2:
-            return self._speak_murf_streaming(text, _chunks, _locale, _convert_dev)
+            return self._speak_murf_streaming(text, _chunks, _locale, _convert_dev, _style)
 
         # Auto language detection: Hindi/Marathi (Devanagari) vs Hinglish vs English
         has_devanagari = len(re.findall(r'[\u0900-\u097F]', clean)) >= 2
@@ -977,57 +1011,11 @@ class VoiceOutput:
         payload_text = to_devanagari(clean) if _convert_dev else clean
         payload_locale = _locale
 
-        logger.info(f"[TTS] Murf Falcon 2.1 request → voice={MURF_VOICE_ID} locale={payload_locale} | {payload_text[:45]!r}")
+        logger.info(f"[TTS] Murf Falcon 2.1 request → voice={MURF_VOICE_ID} locale={payload_locale} style={_style} | {payload_text[:45]!r}")
 
         tmp_path = tempfile.mktemp(suffix=".mp3")
         try:
-            headers = {
-                "api-key": MURF_API_KEY,
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "voiceId": MURF_VOICE_ID,
-                "style": MURF_STYLE,
-                "model": MURF_MODEL,
-                "locale": payload_locale,
-                "text": payload_text,
-                "format": MURF_FORMAT,
-            }
-
-            audio_bytes = None
-            for endpoint in MURF_FALCON_ENDPOINTS:
-                try:
-                    resp = requests.post(endpoint, headers=headers, json=payload, timeout=8)
-                    if resp.status_code == 200 and len(resp.content) > CACHE_MIN_FILE_SIZE:
-                        audio_bytes = resp.content
-                        break
-                    else:
-                        logger.warning(f"[TTS] Murf Falcon endpoint {endpoint} status {resp.status_code}: {resp.text[:120]}")
-                except Exception as ep_err:
-                    logger.debug(f"[TTS] Murf Falcon endpoint {endpoint} failed: {ep_err}")
-
-            # Secondary fallback: Murf SDK generate()
-            if not audio_bytes and self._murf_client:
-                try:
-                    res = self._murf_client.text_to_speech.generate(
-                        text=payload_text,
-                        voice_id=MURF_VOICE_ID,
-                        style=MURF_STYLE,
-                        locale=payload_locale,
-                        model_version="GEN2",
-                        format=MURF_FORMAT,
-                        sample_rate=MURF_SAMPLE_RATE,
-                        pitch=MURF_PITCH,
-                    )
-                    audio_url = getattr(res, "audio_file", None) or getattr(res, "audioFile", None)
-                    if audio_url:
-                        import urllib.request
-                        urllib.request.urlretrieve(audio_url, tmp_path)
-                        if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > CACHE_MIN_FILE_SIZE:
-                            with open(tmp_path, "rb") as f:
-                                audio_bytes = f.read()
-                except Exception as sdk_err:
-                    logger.debug(f"[TTS] Murf SDK fallback failed: {sdk_err}")
+            audio_bytes = self._murf_request_bytes(payload_text, payload_locale, _style)
 
             if audio_bytes:
                 with open(tmp_path, "wb") as f:

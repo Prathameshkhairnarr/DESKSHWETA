@@ -25,6 +25,26 @@ class BrowserAgent:
     def __init__(self) -> None:
         self.is_running: bool = False
         self.task_history: List[Dict] = []
+        # Persistent browser session: lives on a dedicated background event loop
+        # and stays OPEN between tasks, so the user's Brave logins and an
+        # in-progress cart / results page survive for them to review and pay.
+        self._loop = None
+        self._thread = None
+        self._pw = None
+        self._context = None
+        self._cdp_browser = None
+        self._profile_active: bool = False
+
+    def _ensure_loop(self) -> None:
+        """Start a long-lived background asyncio loop (once) that owns the
+        browser, so the browser isn't killed when a single task finishes."""
+        if self._loop is not None and self._loop.is_running():
+            return
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever, daemon=True, name="BrowserAgentLoop"
+        )
+        self._thread.start()
 
     def execute(self, goal: str) -> Dict[str, Any]:
         """Execute a browser task."""
@@ -35,10 +55,11 @@ class BrowserAgent:
         start_time = time.time()
 
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(self._run(goal))
-            loop.close()
+            # Run on the persistent background loop that owns the open browser,
+            # instead of a throwaway loop (which would close the browser).
+            self._ensure_loop()
+            fut = asyncio.run_coroutine_threadsafe(self._run(goal), self._loop)
+            result = fut.result(timeout=180)
         except Exception as e:
             result = {"success": False, "result": "", "error": str(e)}
         finally:
@@ -60,15 +81,98 @@ class BrowserAgent:
         msg = result.get("result", "") or result.get("error", "Task complete.")
         return {"status": "success", "message": msg}
 
-    async def _run(self, goal: str) -> Dict[str, Any]:
-        """Run browser task with Playwright."""
-        from playwright.async_api import async_playwright
-
-        browser = None
+    def _cdp_alive(self, port: int) -> bool:
+        """True if a Chrome DevTools endpoint is already listening on the port."""
+        import urllib.request
         try:
-            pw = await async_playwright().start()
-            browser = await pw.chromium.launch(headless=False)
-            page = await browser.new_page()
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+    async def _ensure_context(self):
+        """Attach to 'Shweta's Brave' over CDP — a DEDICATED Brave instance we
+        launch with remote-debugging on its own persistent profile. Because it's a
+        separate profile from the user's daily Brave, there's NO profile-lock
+        conflict (the old launch_persistent_context failed with exitCode 21 when
+        Brave was already running). The user logs into Swiggy/Zomato/Amazon ONCE in
+        this browser and those logins persist. The browser is launched detached so
+        it stays open for the user to review the cart and pay. Falls back to a clean
+        managed browser only if CDP can't be established."""
+        from playwright.async_api import async_playwright
+        from config import BROWSER_PATH
+
+        # Reuse the already-connected session if it's still alive.
+        if self._context is not None:
+            try:
+                _ = self._context.pages
+                return self._context
+            except Exception:
+                self._context = None
+
+        if self._pw is None:
+            self._pw = await async_playwright().start()
+
+        import subprocess
+        import time as _time
+        cdp_port = int(os.getenv("SHWETA_CDP_PORT", "9222"))
+        profile_dir = os.getenv("SHWETA_BROWSER_PROFILE") or os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ShwetaBrowser"
+        )
+
+        # Launch Shweta's dedicated Brave with remote debugging if it isn't up yet.
+        if not self._cdp_alive(cdp_port):
+            if BROWSER_PATH and os.path.exists(BROWSER_PATH):
+                try:
+                    os.makedirs(profile_dir, exist_ok=True)
+                    subprocess.Popen(
+                        [
+                            BROWSER_PATH,
+                            f"--remote-debugging-port={cdp_port}",
+                            f"--user-data-dir={profile_dir}",
+                            "--no-first-run",
+                            "--no-default-browser-check",
+                            "--start-maximized",
+                        ],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    logger.info(f"[BrowserAgent] Launched Shweta's Brave (CDP :{cdp_port}, profile {profile_dir}).")
+                except Exception as e:
+                    logger.warning(f"[BrowserAgent] Could not launch Brave for CDP: {e}")
+                # Wait for the debugging endpoint to come up.
+                for _ in range(24):
+                    if self._cdp_alive(cdp_port):
+                        break
+                    _time.sleep(0.5)
+
+        # Connect over CDP to the running Brave (user's dedicated, logged-in profile).
+        if self._cdp_alive(cdp_port):
+            try:
+                self._cdp_browser = await self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
+                self._context = (
+                    self._cdp_browser.contexts[0]
+                    if self._cdp_browser.contexts
+                    else await self._cdp_browser.new_context(no_viewport=True)
+                )
+                self._profile_active = True
+                logger.info("[BrowserAgent] Connected to Shweta's Brave over CDP — saved logins available.")
+                return self._context
+            except Exception as e:
+                logger.warning(f"[BrowserAgent] CDP connect failed ({e}); using a clean browser instead.")
+
+        # Fallback: clean managed browser (no saved logins)
+        self._profile_active = False
+        browser = await self._pw.chromium.launch(headless=False)
+        self._context = await browser.new_context(no_viewport=True)
+        return self._context
+
+    async def _run(self, goal: str) -> Dict[str, Any]:
+        """Run a browser task. The browser (user's profile) stays OPEN afterwards
+        so the user can review the cart / results page and complete payment."""
+        try:
+            context = await self._ensure_context()
+            page = await context.new_page()
 
             # Use Gemini to plan steps
             steps = self._plan_steps(goal)
@@ -83,23 +187,64 @@ class BrowserAgent:
                         results.append(result)
                 except Exception as e:
                     logger.warning(f"Step {i+1} failed: {e}")
+                # If a click opened the product in a NEW tab, follow it so the next
+                # step (e.g. Add to Cart) acts on the product page, not the old search.
+                try:
+                    if context.pages and context.pages[-1] is not page:
+                        page = context.pages[-1]
+                        await page.bring_to_front()
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
 
             # Get page content for summary
             try:
                 await asyncio.sleep(3)  # Wait for page to fully load
                 url = page.url.lower()
                 content = ""
-                
-                # Try structured extraction for known sites
-                if "amazon" in url:
+
+                # CART pages → report what's in the cart, or detect empty (so we can
+                # honestly tell the user if the auto-add worked or not).
+                if ("/cart" in url or "/gp/cart" in url or "viewcart" in url):
                     try:
-                        await page.wait_for_selector('[data-component-type="s-search-result"]', timeout=5000)
-                        items = await page.query_selector_all('[data-component-type="s-search-result"]')
+                        body_l = (await page.inner_text("body")).lower()
+                        if ("cart is empty" in body_l or "your amazon cart is empty" in body_l
+                                or "no items in your cart" in body_l or "your cart is empty" in body_l):
+                            content = "CART EMPTY"
+                        else:
+                            cart_items = await page.query_selector_all(
+                                '.sc-list-item, [data-name="Active Items"] .sc-list-item-content, .sc-list-item-content'
+                            )
+                            lines = []
+                            for it in cart_items[:8]:
+                                t_el = await it.query_selector('.sc-product-title, .a-truncate-cut, .sc-grid-item-product-title')
+                                p_el = await it.query_selector('.sc-product-price, .a-price-whole, .sc-price')
+                                t = (await t_el.inner_text()) if t_el else ""
+                                p = (await p_el.inner_text()) if p_el else ""
+                                if t.strip():
+                                    lines.append(f"{t.strip()} - {p.strip()}".strip(" -"))
+                            content = ("CART ITEMS:\n" + "\n".join(lines)) if lines else "CART EMPTY"
+                    except Exception:
+                        pass
+
+                # Try structured extraction for known sites
+                if not content and "amazon" in url:
+                    try:
+                        try:
+                            await page.wait_for_selector(
+                                'div.s-main-slot div[data-asin]:not([data-asin=""]), [data-component-type="s-search-result"]',
+                                timeout=9000,
+                            )
+                        except Exception:
+                            pass
+                        items = await page.query_selector_all(
+                            '[data-component-type="s-search-result"], div.s-main-slot div[data-asin]:not([data-asin=""])'
+                        )
                         product_lines = []
                         for item in items[:10]:
                             try:
-                                title_el = await item.query_selector('h2 a span, h2 span')
-                                price_whole = await item.query_selector('.a-price-whole')
+                                title_el = await item.query_selector('h2 a span, h2 span, .a-size-medium, .a-size-base-plus')
+                                price_whole = await item.query_selector('.a-price .a-price-whole, .a-price-whole')
                                 rating_el = await item.query_selector('.a-icon-alt')
                                 title = await title_el.inner_text() if title_el else ""
                                 price = await price_whole.inner_text() if price_whole else "N/A"
@@ -125,23 +270,26 @@ class BrowserAgent:
             except Exception:
                 content = ""
 
-            await browser.close()
-            await pw.stop()
+            # NOTE: browser is intentionally LEFT OPEN so the user can review the
+            # cart / results page and finish payment themselves. The persistent
+            # context lives on the background loop and is reused for the next task.
 
             # Summarize results
             summary = self._summarize(goal, results, content)
-            return {"success": True, "result": summary, "error": None}
+            return {"success": True, "result": summary, "error": None, "profile": self._profile_active}
 
         except Exception as e:
-            if browser:
-                try:
-                    await browser.close()
-                except Exception:
-                    pass
             return {"success": False, "result": "", "error": str(e)}
 
     def _plan_steps(self, goal: str) -> List[Dict]:
         """Use AI (multi-provider) to plan browser steps from goal."""
+        # Known sites get a DETERMINISTIC, reliable template — don't gamble on the
+        # LLM inventing selectors (it kept Google-searching the whole instruction or
+        # missing Amazon's result grid). Direct search URLs + waits are far steadier.
+        gl = goal.lower()
+        if any(s in gl for s in ("amazon", "flipkart", "swiggy", "zomato", "flight", "google flights")):
+            return self._fallback_plan(goal)
+
         prompt = f"""You are a browser automation planner. Given a goal, output a JSON array of steps.
 Each step has: {{"action": "goto|click|type|scroll|wait|extract", "selector": "css selector or url", "value": "text to type or extract description"}}
 
@@ -224,6 +372,11 @@ Output ONLY valid JSON array, nothing else."""
         # Our _book_flight/_order_food goals embed the real query in 'single quotes'.
         qm = _re.search(r"'([^']+)'", goal)
         quoted = qm.group(1).strip() if qm else ""
+        # Whether the user actually wants the item ADDED to the cart (vs just shown).
+        # We always STOP at the cart — never pay — so a wrong pick is easily removed.
+        want_cart = any(w in goal_lower for w in (
+            "cart", "add to cart", "order", "buy", "khareed", "daal", "mangwa", "mangao",
+        ))
 
         # FLIGHTS → Google Flights deep link (not a raw search of the instruction)
         if "flight" in goal_lower:
@@ -234,33 +387,75 @@ Output ONLY valid JSON array, nothing else."""
                 {"action": "extract", "selector": "", "value": "flight options with airline, time and price"},
             ]
 
-        # FOOD → Swiggy / Zomato search page
+        # FOOD → Swiggy / Zomato
         if any(w in goal_lower for w in ("swiggy", "zomato", "food order", "order food", "khana")):
             q = quoted or " ".join(goal.split()[:8])
             if "zomato" in goal_lower:
                 url = f"https://www.zomato.com/search?q={quote_plus(q)}"
             else:
                 url = f"https://www.swiggy.com/search?query={quote_plus(q)}"
-            return [
+            steps = [
                 {"action": "goto", "selector": url, "value": ""},
-                {"action": "wait", "selector": "", "value": "4"},
-                {"action": "extract", "selector": "", "value": "food items and prices"},
+                {"action": "wait", "selector": "", "value": "5"},
             ]
+            if want_cart:
+                # Best-effort add-to-cart: open the first result, then click the first
+                # ADD button. Food sites are very dynamic, so each step may miss — the
+                # browser is left open on whatever page it reached for the user to finish.
+                steps += [
+                    {"action": "click", "selector": "a[href*='/restaurants/'], a[href*='/city/'], a[href*='/restaurant/']", "value": ""},
+                    {"action": "wait", "selector": "", "value": "4"},
+                    {"action": "click", "selector": "button:has-text('ADD'), div:has-text('ADD') button, [aria-label*='Add']", "value": ""},
+                    {"action": "wait", "selector": "", "value": "2"},
+                    {"action": "extract", "selector": "", "value": "cart items and total price"},
+                ]
+            else:
+                steps += [{"action": "extract", "selector": "", "value": "food items and prices"}]
+            return steps
 
-        if "amazon" in goal_lower:
-            # Extract search query from goal
-            query = goal_lower
-            for remove in ["amazon", "search", "find", "best", "top", "list", "on", "india", "in", "under", "ke", "andar", "rupees", "rs", "budget"]:
-                query = query.replace(remove, "")
-            query = " ".join(query.split()).strip() or "headphones"
+        if "amazon" in goal_lower or "flipkart" in goal_lower:
+            # Clean the query (prefer the quoted part), then go STRAIGHT to the
+            # search-results URL — typing into a search box was unreliable and often
+            # left us on the homepage (only category nav got extracted).
+            query = quoted
+            if not query:
+                query = goal_lower
+                for remove in ["amazon", "flipkart", "search", "find", "best", "top", "list",
+                               "on", "india", "in", "under", "ke", "andar", "rupees", "rs",
+                               "budget", "buy", "khareed", "dhundh", "dhundho", "karo"]:
+                    query = _re.sub(rf'\b{_re.escape(remove)}\b', '', query)
+                query = " ".join(query.split()).strip() or "headphones"
+            if "flipkart" in goal_lower:
+                search_url = f"https://www.flipkart.com/search?q={quote_plus(query)}"
+                product_sel = "a.CGtC98, a._1fQZEK, a.s1Q9rs, a._2rpwqI, a.wjcEIp"
+                addbtn_sel = "button:has-text('Add to cart'), button:has-text('ADD TO CART'), li:has-text('ADD TO CART')"
+                cart_url = "https://www.flipkart.com/viewcart"
+            else:
+                search_url = f"https://www.amazon.in/s?k={quote_plus(query)}"
+                product_sel = 'div.s-main-slot div[data-asin]:not([data-asin=""]) h2 a'
+                addbtn_sel = "#add-to-cart-button"
+                cart_url = "https://www.amazon.in/gp/cart/view.html"
+
+            if want_cart:
+                # Open the first matching product, click Add to Cart, then show the cart.
+                # We STOP at the cart — never Buy Now / pay — so the user reviews & pays.
+                return [
+                    {"action": "goto", "selector": search_url, "value": ""},
+                    {"action": "wait", "selector": "", "value": "4"},
+                    {"action": "click", "selector": product_sel, "value": ""},
+                    {"action": "wait", "selector": "", "value": "3"},
+                    {"action": "click", "selector": addbtn_sel, "value": ""},
+                    {"action": "wait", "selector": "", "value": "2"},
+                    {"action": "goto", "selector": cart_url, "value": ""},
+                    {"action": "wait", "selector": "", "value": "3"},
+                    {"action": "extract", "selector": "", "value": "cart items and total price"},
+                ]
             return [
-                {"action": "goto", "selector": "https://www.amazon.in", "value": ""},
-                {"action": "wait", "selector": "", "value": "2"},
-                {"action": "type", "selector": "#twotabsearchtextbox", "value": query},
-                {"action": "click", "selector": "#nav-search-submit-button", "value": ""},
-                {"action": "wait", "selector": "", "value": "3"},
+                {"action": "goto", "selector": search_url, "value": ""},
+                {"action": "wait", "selector": "", "value": "4"},
                 {"action": "extract", "selector": "", "value": "product names and prices"},
                 {"action": "scroll", "selector": "", "value": ""},
+                {"action": "wait", "selector": "", "value": "2"},
                 {"action": "extract", "selector": "", "value": "more product names and prices"},
             ]
         elif "google" in goal_lower:
@@ -308,13 +503,24 @@ Output ONLY valid JSON array, nothing else."""
                         pass
 
         elif action == "click":
-            try:
-                await page.click(selector, timeout=5000)
-                await asyncio.sleep(2)
-            except Exception:
-                # Try pressing Enter as fallback
-                await page.keyboard.press("Enter")
-                await asyncio.sleep(2)
+            # Try the whole selector, then each comma-separated alternative, so a
+            # best-effort list like "btnA, btnB, btnC" clicks the first that exists.
+            clicked = False
+            candidates = [selector] + [s.strip() for s in selector.split(",") if s.strip()]
+            for sel in candidates:
+                try:
+                    await page.click(sel, timeout=4000)
+                    clicked = True
+                    await asyncio.sleep(2)
+                    break
+                except Exception:
+                    continue
+            if not clicked:
+                try:
+                    await page.keyboard.press("Enter")
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass
 
         elif action == "scroll":
             await page.evaluate("window.scrollBy(0, 500)")
@@ -333,14 +539,23 @@ Output ONLY valid JSON array, nothing else."""
                 # Amazon product results
                 if "amazon" in url:
                     try:
-                        # Wait for search results to load
-                        await page.wait_for_selector('[data-component-type="s-search-result"]', timeout=5000)
-                        items = await page.query_selector_all('[data-component-type="s-search-result"]')
+                        # Wait for the real result grid; try several selectors since
+                        # Amazon's markup varies by page/layout.
+                        try:
+                            await page.wait_for_selector(
+                                'div.s-main-slot div[data-asin]:not([data-asin=""]), [data-component-type="s-search-result"]',
+                                timeout=9000,
+                            )
+                        except Exception:
+                            pass
+                        items = await page.query_selector_all(
+                            '[data-component-type="s-search-result"], div.s-main-slot div[data-asin]:not([data-asin=""])'
+                        )
                         results = []
                         for item in items[:10]:  # Top 10 products
                             try:
-                                title_el = await item.query_selector('h2 a span, h2 span')
-                                price_whole = await item.query_selector('.a-price-whole')
+                                title_el = await item.query_selector('h2 a span, h2 span, .a-size-medium, .a-size-base-plus')
+                                price_whole = await item.query_selector('.a-price .a-price-whole, .a-price-whole')
                                 title = await title_el.inner_text() if title_el else ""
                                 price = await price_whole.inner_text() if price_whole else "N/A"
                                 if title:
@@ -417,8 +632,51 @@ Output ONLY valid JSON array, nothing else."""
 
         return None
 
+    def _raw_fallback(self, content: str, goal: str) -> str:
+        """A factual, never-refusing message built from the extracted content —
+        used when the LLM summary is empty or (wrongly) refuses."""
+        if content and "PRODUCTS FOUND:" in content:
+            lines = [l for l in content.replace("PRODUCTS FOUND:\n", "").split("\n") if l.strip()][:3]
+            if lines:
+                return "Ye options mile: " + "; ".join(lines) + ". Browser khula hai — pasand aaye to cart mein daal ke pay kar lena."
+        if content and len(content.strip()) >= 40:
+            lines = [l.strip() for l in content.split("\n") if len(l.strip()) > 15][:4]
+            if lines:
+                return ("Browser khula hai — " + " | ".join(lines))[:220]
+        return "Browser khol diya hai — results screen pe dekh le, pasand aaye to cart mein daal ke pay kar lena."
+
+    def _clean_summary(self, text: str, content: str, goal: str) -> str:
+        """Never let Shweta speak an LLM refusal. If the model says it 'can't' do it
+        (it's only summarizing already-fetched results), use a factual fallback."""
+        t = (text or "").strip()
+        low = t.lower()
+        refusal_markers = (
+            "i'm sorry", "i am sorry", "i can't", "i cannot", "can't help",
+            "cannot help", "can't perform", "cannot perform", "unable to",
+            "i'm an ai", "i am an ai", "as an ai", "don't have access", "no access",
+            "nahi kar sakta", "nahi kar sakti", "nahi kar paungi", "nahi kar paungi",
+            "access nahi", "maaf kij",
+        )
+        if not t or any(m in low for m in refusal_markers):
+            return self._raw_fallback(content, goal)
+        return t
+
     def _summarize(self, goal: str, results: List, content: str) -> str:
         """Summarize browser results with shopping-aware AI prompt."""
+        # Cart-status markers get a direct, honest message (no LLM needed).
+        c = content or ""
+        if "CART ITEMS:" in c:
+            items = [l.strip() for l in c.split("CART ITEMS:", 1)[1].split("\n") if l.strip()][:4]
+            if items:
+                return "Cart mein daal diya: " + "; ".join(items) + ". Browser khula hai — review karke aap pay kar lena."
+        if "CART EMPTY" in c:
+            return "Cart abhi khaali dikh raha — item apne aap add nahi ho paya. Browser khula hai, aap khud daal ke pay kar lena."
+
+        # Thin/empty content → don't even ask the LLM (that's when it hallucinates
+        # a refusal). Just tell the user the browser is open to review.
+        if not content or len(content.strip()) < 40:
+            return "Browser khol diya hai — results screen pe dekh le aur pasand aaye to cart mein daal ke pay kar lena."
+
         # Detect if this is a shopping query
         is_shopping = any(w in goal.lower() for w in [
             "best", "recommend", "under", "ke andar", "buy", "khareed",
@@ -474,7 +732,7 @@ Ab in results ke basis pe user ko clear answer de."""
                     timeout=10
                 )
                 if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"].strip()
+                    return self._clean_summary(resp.json()["choices"][0]["message"]["content"], content, goal)
         except Exception:
             pass
 
@@ -488,7 +746,7 @@ Ab in results ke basis pe user ko clear answer de."""
                 contents=f"{system_prompt}\n\n{user_prompt}",
                 config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=250)
             )
-            return response.text.strip()
+            return self._clean_summary(response.text, content, goal)
         except Exception:
             pass
 
@@ -512,7 +770,7 @@ Ab in results ke basis pe user ko clear answer de."""
                     timeout=15
                 )
                 if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"].strip()
+                    return self._clean_summary(resp.json()["choices"][0]["message"]["content"], content, goal)
         except Exception:
             pass
 
