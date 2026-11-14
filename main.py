@@ -20,6 +20,8 @@ from assistant.voice_input import VoiceInput
 from assistant.voice_output import VoiceOutput
 from assistant.agent_system import MultiAgentBrain
 from assistant.desktop_control import DesktopController
+from agent.orchestrator import AgentOrchestrator
+from agent.types import AgentEvent, EventType
 from assistant.channels.telegram_bot import ShwetaTelegramBot
 from assistant.activation import setup_activation
 from assistant.skills.proactive_agent import ProactiveManager
@@ -76,6 +78,17 @@ class ShwetaAssistant:
             on_timer_complete=self._on_timer_complete
         )
         print_status("Desktop Control", "OK", "System + Apps + Files")
+
+        # Agent Orchestrator — autonomous multi-step agent (Phase 2)
+        self.orchestrator = AgentOrchestrator(
+            multi_agent_brain=self.ai_brain,
+            desktop_controller=self.desktop_control,
+            event_callback=self._on_agent_event,
+        )
+        print_status("Agent Orchestrator", "OK", "ReAct loop + tool registry active")
+
+        # Pending confirmation for agent HIGH-risk actions
+        self._pending_agent_confirm: str | None = None  # task_id waiting for confirm
         print()
 
         # Initialize PyQt5 Avatar UI (main thread)
@@ -88,8 +101,10 @@ class ShwetaAssistant:
         # Connect lip sync: voice_output → avatar
         self.voice_output.set_lip_sync_callback(self._on_lip_sync)
 
-        # Connect window shake reactions to voice output (with intensity)
-        self.ui.set_speak_reaction_fn(lambda text: self.voice_output.speak_reaction(text))
+        # Connect window shake reactions to voice output (with emotion for voice style)
+        self.ui.set_speak_reaction_fn(
+            lambda text, emotion=None: self.voice_output.speak_reaction(text, emotion=emotion)
+        )
 
         # Connect music vibe to avatar
         self.desktop_control.set_music_vibe_callback(self._on_music_vibe)
@@ -320,6 +335,128 @@ class ShwetaAssistant:
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
             self.ui.schedule(self.ui.set_text, "Kuch gadbad hui, phir try karo.")
 
+    # ==================================================================
+    # Phase B — interactive slot-filling for order_food / book_flight
+    # Shweta asks for the missing bits (provider, item, route), remembers
+    # the answers across turns, then runs the action.
+    # ==================================================================
+    def _detect_provider(self, text: str):
+        """Detect a food provider from speech (roman or Devanagari)."""
+        t = (text or "").lower()
+        if "zomato" in t or "zomato" in t or "ज़ोमैटो" in text or "जोमैटो" in text or "जोमाटो" in text:
+            return "Zomato"
+        if "swiggy" in t or "swigy" in t or "स्विगी" in text or "स्विग्गी" in text:
+            return "Swiggy"
+        return None
+
+    def _ask_user(self, question: str) -> None:
+        """Speak a follow-up question to the user and show it on the avatar."""
+        try:
+            self.ui.schedule(self.ui.set_emotion, "curious", 0.7)
+            self.ui.schedule(self.ui.show_chat_bubble, question, 6.0)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+        except Exception:
+            pass
+        try:
+            voice = self.desktop_control.language.get_voice()
+            self.voice_output.speak(question, voice=voice)
+        except Exception:
+            try:
+                self.voice_output.speak(question)
+            except Exception:
+                pass
+
+    def _slot_question(self, action: str, slot: str) -> str:
+        if action == "order_food":
+            if slot == "provider":
+                return "Kaunse platform se — Swiggy ya Zomato?"
+            if slot == "item":
+                return "Kya order karna hai?"
+        if action == "book_flight":
+            if slot == "route":
+                return "Kahaan se kahaan ki flight? Jaise Nashik se Mumbai."
+        return "Thoda aur detail batao."
+
+    def _maybe_start_slot_fill(self, action: str, params: dict, text: str) -> bool:
+        """If required info is missing, ask the user and enter pending mode.
+        Returns True when a question was asked (caller should NOT execute yet)."""
+        import re
+        if action == "order_food":
+            q = str(params.get("query", "")).strip()
+            prov = self._detect_provider(q) or self._detect_provider(text)
+            core = q
+            for w in ("swiggy", "zomato"):
+                core = re.sub(w, "", core, flags=re.I)
+            core = core.strip(" .,-|")
+            item = q.strip() if len(core) >= 3 else None
+            slots = {"provider": prov, "item": item}
+            need = ["provider", "item"]
+            missing = [s for s in need if not slots.get(s)]
+            if not missing:
+                return False
+            self._pending_slot = {"action": action, "slots": slots, "need": need}
+            self._ask_user(self._slot_question(action, missing[0]))
+            return True
+        if action == "book_flight":
+            q = str(params.get("query", "")).strip()
+            has_route = bool(re.search(r'(\bse\b|\bto\b|से|\bfrom\b)', q, flags=re.I)) and len(q.split()) >= 3
+            if has_route:
+                return False
+            self._pending_slot = {"action": action, "slots": {"route": None}, "need": ["route"]}
+            self._ask_user(self._slot_question(action, "route"))
+            return True
+        return False
+
+    def _handle_pending_slot(self, text: str) -> bool:
+        """If we're mid-conversation filling slots, treat this utterance as the
+        answer. Returns True if it was consumed (don't route to the brain)."""
+        ps = getattr(self, "_pending_slot", None)
+        if not ps:
+            return False
+        t = (text or "").strip()
+        tl = t.lower()
+        # explicit cancel
+        if any(w in tl for w in ("cancel", "rehne do", "rhne do", "chhodo", "chodo", "kainsil")) \
+                or "रहने दो" in t or "छोड़ो" in t or "कैंसल" in t:
+            self._pending_slot = None
+            self._ask_user("Theek hai, rehne deti hoon.")
+            return True
+
+        slots = ps["slots"]
+        need = ps["need"]
+        action = ps["action"]
+        cur = next((s for s in need if not slots.get(s)), None)
+        if cur == "provider":
+            slots["provider"] = self._detect_provider(t) or ("Zomato" if "zomato" in tl else "Swiggy")
+        elif cur == "item":
+            slots["item"] = t
+        elif cur == "route":
+            slots["route"] = t
+
+        nxt = next((s for s in need if not slots.get(s)), None)
+        if nxt:
+            self._ask_user(self._slot_question(action, nxt))
+            return True
+
+        # All slots filled → build params and run the action.
+        self._pending_slot = None
+        if action == "order_food":
+            prov = slots.get("provider", "")
+            item = slots.get("item", "")
+            params = {"query": f"{prov} {item}".strip()}
+            self._ask_user(f"{prov} pe {item} dhoondh rahi hoon, cart tak le jaake browser khula chhod dungi. Payment aap karna.")
+        elif action == "book_flight":
+            params = {"query": slots.get("route", "")}
+            self._ask_user(f"{slots.get('route','')} ki flights dekh rahi hoon. Booking aap karna.")
+        else:
+            params = {}
+        try:
+            result = self.desktop_control.execute(action, params)
+            logger.info(f"[SlotFill] {action} executed → {result}")
+        except Exception as e:
+            logger.warning(f"[SlotFill] {action} execute failed: {e}")
+        return True
+
     def _process_input(self, text: str) -> None:
         """
         Process user input through AI brain and execute actions.
@@ -335,6 +472,12 @@ class ShwetaAssistant:
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_THINKING)
         self.ui.schedule(self.ui.show_typing_bubble)
 
+        # Phase B: if we're waiting for the user to fill in provider/item/route,
+        # THIS utterance is their answer — handle it, don't route to the brain.
+        if self._handle_pending_slot(text):
+            self._is_processing = False
+            return
+
         # Check for special commands
         if self._handle_special_commands(text):
             self._is_processing = False
@@ -346,8 +489,13 @@ class ShwetaAssistant:
         except Exception:
             pass
 
-        # Send to AI brain (with language detection)
-        response = self.ai_brain.think(text, language_manager=self.desktop_control.language)
+        # NOTE: the pre-reply acknowledgement filler ("haan"/"hmm") was removed —
+        # it made Shweta say an extra "haan/ahh" before EVERY reply, which felt
+        # robotic (filler → pause → real reply = double utterance). With streaming
+        # TTS the real reply already starts fast, so no filler is needed.
+
+        # Send to Orchestrator (AgentOrchestrator → old brain fast-path or ReAct loop)
+        response = self.orchestrator.process(text, language_manager=self.desktop_control.language)
 
         # Track user patterns
         try:
@@ -359,6 +507,18 @@ class ShwetaAssistant:
         params = response.get("params", {})
         reply = response.get("reply", "")
         emotion = response.get("emotion", "neutral")
+        agent = response.get("agent", "unknown")
+
+        logger.info(f"[Response] agent={agent} action={action} emotion={emotion} reply='{reply[:120]}'")
+        if params and action not in ("none", "agent_task"):
+            logger.info(f"[Response] params={params}")
+
+        # Detect user language from input for language-aware actions
+        import re as _re
+        _has_devanagari = len(_re.findall(r'[ऀ-ॿ]', text)) >= 2
+        _hindi_words = {"kya", "kaise", "batao", "sunao", "bata", "khabar", "haal", "aaj", "kal", "abhi", "hain", "mujhe", "sunao", "dikha", "bolo"}
+        _input_words = set(_re.findall(r'[a-zA-Z]+', text.lower()))
+        _user_lang = "hi" if _has_devanagari or bool(_input_words & _hindi_words) else "en"
 
         # SAFETY: Ensure params is dict, action is string
         if not isinstance(params, dict):
@@ -369,6 +529,12 @@ class ShwetaAssistant:
             reply = str(reply) if reply else ""
         if not isinstance(emotion, str):
             emotion = "neutral"
+
+        # Phase B: order_food / book_flight need provider + item (or route). If the
+        # brain didn't supply them, ask the user instead of running a half-baked search.
+        if action in ("order_food", "book_flight") and self._maybe_start_slot_fill(action, params, text):
+            self._is_processing = False
+            return
 
         # FALLBACK: If AI promised to play music in reply but didn't send action
         if (action == "none" or not action) and reply:
@@ -400,6 +566,11 @@ class ShwetaAssistant:
         # Set avatar emotion based on AI response
         if emotion:
             self.ui.schedule(self.ui.set_emotion, emotion, 0.8 if emotion != "neutral" else 0.0)
+            # Match the VOICE style to the emotion too (happy sounds cheerful, etc.)
+            try:
+                self.voice_output.set_emotion_hint(emotion)
+            except Exception:
+                pass
             # Track mood for learning
             try:
                 self.desktop_control.learner.track_mood(emotion)
@@ -411,9 +582,13 @@ class ShwetaAssistant:
         if not action or action == "none" or action not in music_actions:
             self.desktop_control._stop_music_vibe()
 
+        # Inject detected language into language-aware actions
+        if action in ("get_news", "daily_briefing", "morning_briefing"):
+            params["language"] = _user_lang
+
         # Execute action first (if any)
         action_message = ""
-        if action and action != "none":
+        if action and action not in ("none", "agent_task"):
             if action == "clear_history":
                 self.ai_brain.clear_history()
             else:
@@ -459,6 +634,7 @@ class ShwetaAssistant:
             reply = clean_msg
 
         # Speak the reply (once only)
+        logger.info(f"[Speaking] final_reply='{reply[:150]}'" if reply else "[Speaking] (no reply)")
         if reply:
             if action == "react_to_screen":
                 import random
@@ -488,6 +664,54 @@ class ShwetaAssistant:
         self._last_activity_time = time.time()
         self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
 
+    def _on_agent_event(self, event: AgentEvent) -> None:
+        """
+        Called by AgentLoop for every step/task event.
+        Speaks progress updates and updates avatar state/emotion.
+        """
+        spoken = (event.spoken or "").strip()
+        emotion = event.emotion or "neutral"
+        etype = event.event_type
+
+        # Update avatar emotion
+        if emotion and emotion != "neutral":
+            self.ui.schedule(self.ui.set_emotion, emotion, 0.7)
+
+        if etype == EventType.CONFIRM_NEEDED:
+            # Agent is waiting for user confirmation (HIGH-risk action)
+            self._pending_agent_confirm = event.task_id
+            self._pending_confirm = None  # clear old-style confirm
+            if spoken:
+                self.ui.schedule(self.ui.set_text, f"❓ {spoken}")
+                self.ui.schedule(self.ui.show_chat_bubble, spoken, 8.0)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+                current_voice = self.desktop_control.language.get_voice()
+                self.voice_output.speak(spoken, voice=current_voice,
+                                        callback=self._on_speaking_done)
+            return
+
+        if etype in (EventType.TASK_DONE, EventType.TASK_FAILED):
+            self._is_processing = False
+            if spoken:
+                self.ui.schedule(self.ui.set_text, f"💬 {spoken}")
+                self.ui.schedule(self.ui.show_chat_bubble, spoken, 6.0)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+                current_voice = self.desktop_control.language.get_voice()
+                self.voice_output.speak(spoken, voice=current_voice,
+                                        callback=self._on_speaking_done)
+            else:
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+            return
+
+        # Progress narration for STEP_DONE / VOICE_UPDATE / PLAN_CREATED
+        if spoken and etype in (EventType.STEP_DONE, EventType.VOICE_UPDATE,
+                                 EventType.PLAN_CREATED, EventType.STEP_FAILED):
+            self.ui.schedule(self.ui.set_text, f"⚙ {spoken}")
+            self.ui.schedule(self.ui.show_chat_bubble, spoken, 3.0)
+            # Speak short updates without blocking (no callback — processing continues)
+            current_voice = self.desktop_control.language.get_voice()
+            self.voice_output.speak(spoken, voice=current_voice)
+
     def _init_idle_timer(self) -> None:
         """Initialize the background checker for idle state."""
         from PyQt5.QtCore import QTimer
@@ -508,22 +732,20 @@ class ShwetaAssistant:
 
         idle_duration = time.time() - self._last_activity_time
 
-        # Tier 3: > 2 minutes (Major interaction attempt)
-        if idle_duration >= 120 and self._idle_tier < 3:
-            self._idle_tier = 3
-            self._trigger_idle_speech(tier=3)
-        # Tier 2: > 60 seconds (Short spoken phrase)
-        elif idle_duration >= 60 and self._idle_tier < 2:
+        # Professional presence: Shweta stays visually alive while idle but NEVER
+        # talks unprompted (no "bore ho rahi hoon" / "chai ka time" chatter).
+        # Tier 2: > 60s — a calm micro-expression (relaxed/think), silent
+        if idle_duration >= 60 and self._idle_tier < 2:
             self._idle_tier = 2
-            self._trigger_idle_speech(tier=2)
-        # Tier 1: > 30 seconds (Micro-expressions only)
+            self._trigger_micro_expression()
+        # Tier 1: > 30s — subtle micro-expression, silent
         elif idle_duration >= 30 and self._idle_tier < 1:
             self._idle_tier = 1
             self._trigger_micro_expression()
-        # Ambient: Every ~15s after 10s idle, do a subtle animation
+        # Ambient: subtle look-around / breathing animation, silent
         elif idle_duration >= 10 and int(idle_duration) % 15 < 5:
             import random
-            if random.random() < 0.3:  # 30% chance to trigger to keep it natural
+            if random.random() < 0.3:
                 self._trigger_ambient_animation()
 
     def _trigger_ambient_animation(self) -> None:
@@ -546,48 +768,6 @@ class ShwetaAssistant:
         expr, intensity, duration = random.choice(exprs)
         self.ui.schedule(lambda: self.ui.trigger_micro_expression(expr, intensity, duration))
 
-    def _trigger_idle_speech(self, tier: int = 2) -> None:
-        """Trigger spoken idle behaviors based on tier."""
-        if self._is_processing or self._is_listening or self.voice_output.is_speaking or self._is_music_active:
-            return
-            
-        import random
-        
-        if tier == 2:
-            behaviors = [
-                {"phrase": "अरे यार, कितना सन्नाटा है...", "emotion": "sad", "animation": "sigh"},
-                {"phrase": "हम्म, मैं यहीं हूँ अगर कुछ काम हो तो।", "emotion": "relaxed", "animation": "slight_smile"},
-                {"phrase": "बोर हो रही हूँ मैं...", "emotion": "sad", "animation": "pout"},
-                {"phrase": "ऐसे ही बैठी रहूंगी क्या मैं?", "emotion": "surprised", "animation": "curious"},
-                {"phrase": "चाय पीने का टाइम हो गया क्या?", "emotion": "happy", "animation": "think"}
-            ]
-        else: # tier 3
-            behaviors = [
-                {"phrase": "ओये! सो गए क्या? चलो जल्दी से कुछ काम बताओ!", "emotion": "happy", "animation": "curious"},
-                {"phrase": "अच्छा सुनो, अगर फ्री हो तो चलो रॉक-पेपर-सिज़र्स खेलते हैं!", "emotion": "happy", "animation": "eyebrow_raise"},
-                {"phrase": "हेलो! कोई है वहाँ? मैं अकेली बोर हो रही हूँ यहाँ।", "emotion": "sad", "animation": "look_around"},
-                {"phrase": "देखो, अगर काम नहीं है तो मैं थोड़ी देर सो जाऊं?", "emotion": "relaxed", "animation": "sleepy"},
-                {"phrase": "काम खत्म हो गया क्या तुम्हारा? म्यूज़िक प्ले करूँ थोड़ा?", "emotion": "happy", "animation": "slight_smile"}
-            ]
-            
-        b = random.choice(behaviors)
-        
-        self._is_idle_talking = True
-        self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
-        self.ui.schedule(self.ui.set_emotion, b["emotion"], 0.6)
-        self.ui.schedule(self.ui.set_text, f"💬 {b['phrase']}")
-        self.ui.schedule(self.ui.show_chat_bubble, b["phrase"], 6.0)
-        
-        # Trigger micro-expression for the speech
-        if b['animation'] in ['curious', 'slight_smile', 'pout', 'sleepy', 'think', 'eyebrow_raise']:
-            self.ui.schedule(lambda: self.ui.trigger_micro_expression(b['animation'], 0.6, 3.0))
-        else:
-            self.ui.schedule(lambda: self.ui.trigger_idle_animation(b['animation']))
-        
-        # Speak the phrase aloud
-        current_voice = self.desktop_control.language.get_voice()
-        self.voice_output.speak(b["phrase"], voice=current_voice, callback=self._on_speaking_done)
-
     def _handle_special_commands(self, text: str) -> bool:
         """
         Handle special built-in commands.
@@ -600,7 +780,83 @@ class ShwetaAssistant:
         """
         text_lower = text.lower().strip()
 
-        # Handle confirmation for pending destructive actions
+        # === MUSIC PLAYBACK CONTROL (when a song/video is playing) ===
+        # Route volume/skip/stop to the TAB/media, not system volume or closing
+        # the whole browser. Only kicks in while music is active.
+        if getattr(self, '_is_music_active', False):
+            _vol_up = ["volume bada", "volume badha", "awaz bada", "awaaz bada", "sound bada",
+                       "volume zyada", "volume up", "louder", "tej kar", "awaz tej"]
+            _vol_down = ["volume kam", "awaz kam", "awaaz kam", "sound kam", "volume down",
+                         "volume ghata", "dhima", "halka kar"]
+            _skip = ["skip", "next", "agla", "aage wala", "agla gana", "agla gaana",
+                     "dusra gana", "change kar", "badal de"]
+            _pause = ["band kar", "bandh kar", "stop", "ruk", "ruko", "roko", "pause",
+                      "rok de", "thehra", "chup kar", "gana band", "gaana band"]
+            _mute = ["mute", "silent kar"]
+            media_action = None
+            if any(w in text_lower for w in _vol_up):
+                media_action, say = "media_volume_up", "Gaane ki volume badha di."
+            elif any(w in text_lower for w in _vol_down):
+                media_action, say = "media_volume_down", "Gaane ki volume kam kar di."
+            elif any(w in text_lower for w in _skip):
+                media_action, say = "media_next", "Agla gana chala rahi hoon."
+            elif any(w in text_lower for w in _mute):
+                media_action, say = "media_mute", "Mute kar diya."
+            elif any(w in text_lower for w in _pause):
+                media_action, say = "media_play_pause", "Gana rok diya."
+            if media_action:
+                self.desktop_control.execute(media_action, {})
+                self.ui.schedule(self.ui.show_chat_bubble, say, 3.0)
+                self.voice_output.speak(say, callback=self._on_speaking_done)
+                self._is_processing = False
+                return True
+
+        # === BOREDOM COMPANION ===
+        # When the user is bored, Shweta engages like a friend (offers a joke,
+        # music, a game or a chat) instead of a dry one-liner.
+        _bored_triggers = ["bore ho raha", "bore ho rahi", "bored ho", "boring lag", "mujhe bore",
+                           "bor ho raha", "mann nahi lag", "man nahi lag", "time pass karau",
+                           "kuch karne ka mann"]
+        if any(t in text_lower for t in _bored_triggers):
+            import random
+            busters = [
+                "Arre bore mat ho! Ek mast joke sunau, ya koi acha gaana laga doon?",
+                "Chalo kuch interesting karte hain — gaana sunoge ya ek fun fact batau?",
+                "Bordem kaisa! Main hoon na. Bolo — joke, gaana, ya koi game khelein?",
+                "Aise kaise bore! Chal ek riddle solve karte hain saath mein?",
+                "Main tera mood theek karti hoon — gaana chala doon ya thodi baatein karein?",
+            ]
+            reply = random.choice(busters)
+            self.ui.schedule(self.ui.set_emotion, "playful", 0.8)
+            self.ui.schedule(self.ui.set_text, f"💬 {reply}")
+            self.ui.schedule(self.ui.show_chat_bubble, reply, 6.0)
+            self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
+            self.voice_output.speak(reply, callback=self._on_speaking_done)
+            self._is_processing = False
+            return True
+
+        # Handle confirmation for agent HIGH-risk actions
+        if getattr(self, '_pending_agent_confirm', None):
+            confirm_words = ["haan", "yes", "kar do", "karo", "confirm", "ok", "haan karo"]
+            cancel_words = ["nahi", "no", "cancel", "mat karo", "ruko", "na"]
+            if any(w in text_lower for w in confirm_words):
+                task_id = self._pending_agent_confirm
+                self._pending_agent_confirm = None
+                self.orchestrator.resolve_confirmation(task_id, confirmed=True)
+                reply = "Theek hai, kar rahi hoon!"
+                self.ui.schedule(self.ui.set_text, reply)
+                self.voice_output.speak(reply, callback=self._on_speaking_done)
+                return True
+            elif any(w in text_lower for w in cancel_words):
+                task_id = self._pending_agent_confirm
+                self._pending_agent_confirm = None
+                self.orchestrator.resolve_confirmation(task_id, confirmed=False)
+                reply = "Theek hai, nahi karti."
+                self.ui.schedule(self.ui.set_text, reply)
+                self.voice_output.speak(reply, callback=self._on_speaking_done)
+                return True
+
+        # Handle confirmation for pending destructive actions (legacy path)
         if hasattr(self, '_pending_confirm') and self._pending_confirm:
             confirm_words = ["haan", "yes", "kar do", "karo", "confirm", "ok"]
             cancel_words = ["nahi", "no", "cancel", "mat karo", "ruko"]
@@ -624,6 +880,43 @@ class ShwetaAssistant:
                 self._pending_confirm = None
                 self.ui.schedule(self.ui.set_text, "कैंसिल कर दिया।")
                 self.voice_output.speak("ठीक है, कैंसिल कर दिया।")
+                return True
+
+        # === DIRECT EMOTION SHORTCUTS (no LLM needed) ===
+        _emotion_map = {
+            "khush": "happy", "khushi": "happy", "happy": "happy", "mast": "happy",
+            "sad": "sad", "udaas": "sad", "dukhi": "sad",
+            "gussa": "angry", "angry": "angry", "naraaz": "angry",
+            "surprised": "surprised", "hairan": "surprised", "shocked": "surprised",
+            "relax": "relaxed", "aaram": "relaxed", "chill": "relaxed",
+            "think": "think", "soch": "think", "socho": "think", "sochna": "think",
+            "curious": "curious", "curiosity": "curious",
+            "wink": "wink", "winked": "wink", "winking": "wink",
+            "pout": "pout",
+            "bored": "bored", "bore": "bored",
+            "neend": "sleepy", "nind": "sleepy", "sojaao": "sleepy", "sleepy": "sleepy",
+            "playful": "playful", "mazaak": "playful", "masti": "playful", "mazak": "playful",
+            "neutral": "neutral", "normal": "neutral",
+        }
+        # Word-based match so "masti" doesn't collide with "mast", etc.
+        import re as _re_em
+        _emotion_words = set(_re_em.findall(r'[a-z]+', text_lower))
+        for keyword, emotion in _emotion_map.items():
+            if keyword in _emotion_words:
+                self.ui.schedule(self.ui.set_emotion, emotion, 0.85)
+                self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_IDLE)
+                reply_map = {
+                    "happy": "haan, khush hoon!", "sad": "oh, thoda udaas hoon.",
+                    "angry": "hmm, naraaz hoon.", "surprised": "oh! surprised hoon.",
+                    "relaxed": "chill kar rahi hoon.", "think": "soch rahi hoon.",
+                    "curious": "curious hoon!", "wink": "hehe.", "pout": "hmm.",
+                    "bored": "thoda bore ho rahi hoon.", "sleepy": "neend aa rahi hai.",
+                    "playful": "hehe, masti ka mood hai!", "neutral": "theek hoon.",
+                }
+                reply = reply_map.get(emotion, "theek hai.")
+                self.ui.schedule(self.ui.show_chat_bubble, reply, 3.0)
+                self.voice_output.speak(reply, callback=self._on_speaking_done)
+                self._is_processing = False
                 return True
 
         # Quit commands
@@ -744,7 +1037,6 @@ class ShwetaAssistant:
         """Start wake word detection in separate process (no mic conflict)."""
         try:
             from assistant.skills.wakeword import WakeWordManager
-            import winsound
             import threading
 
             def on_wake():
@@ -756,11 +1048,7 @@ class ShwetaAssistant:
                 # Visual feedback
                 self.ui.schedule(self.ui.set_emotion, "happy", 0.6)
                 self.ui.schedule(self.ui.show_chat_bubble, "Haan bolo!", 3.0)
-                # Audio feedback (system ding) - non-blocking
-                try:
-                    winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
-                except Exception:
-                    pass
+                # No audio ding — Shweta's voice reply is the feedback
                 # Trigger listen flow
                 self.ui.schedule(self._on_mic_click)
 
@@ -810,6 +1098,30 @@ class ShwetaAssistant:
     def run(self) -> None:
         """Start the assistant (blocks on PyQt5 main loop)."""
         logger.info(f"{ASSISTANT_NAME} is ready!")
+
+        # Launch greeting: the avatar auto-plays a peek + hand wave on load (viewer.html);
+        # here we add a warm spoken hello shortly after, in a happy voice, so the wave
+        # and the greeting land together.
+        try:
+            from PyQt5.QtCore import QTimer
+
+            def _launch_greeting():
+                try:
+                    self.ui.set_emotion("happy", 0.9)
+                except Exception:
+                    pass
+                try:
+                    self.voice_output.speak(
+                        "नमस्ते! मैं श्वेता हूँ, आपकी मदद के लिए तैयार।",
+                        emotion="happy",
+                    )
+                except Exception:
+                    pass
+
+            QTimer.singleShot(1800, _launch_greeting)
+        except Exception:
+            pass
+
         self.ui.run()
 
         # Cleanup on exit

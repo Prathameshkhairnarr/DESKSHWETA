@@ -1,4 +1,4 @@
-"""
+﻿"""
 Multi-Tab Browser Orchestrator for Shweta AI Desktop Assistant.
 Opens multiple tabs in user's Brave browser (with logged-in profile) simultaneously.
 
@@ -37,7 +37,7 @@ class MultiBrowserAgent:
             logger.warning(f"Browser not found at {BRAVE_PATH}")
 
     def execute(self, goal: str) -> Dict[str, Any]:
-        """Execute multi-tab browser task — FAST mode."""
+        """Execute multi-tab browser task â€” FAST mode."""
         if self.is_running:
             return {"status": "error", "message": "Ek task pehle se chal raha hai."}
 
@@ -55,7 +55,7 @@ class MultiBrowserAgent:
             if not tabs:
                 return {"status": "error", "message": "Samajh nahi aaya kya open karna hai."}
 
-            # Step 2: Open all simple URLs directly in Brave (FAST — no Playwright needed)
+            # Step 2: Open all simple URLs directly in Brave (FAST â€” no Playwright needed)
             simple_tabs = [t for t in tabs if not t.get("needs_interaction")]
             complex_tabs = [t for t in tabs if t.get("needs_interaction")]
 
@@ -67,7 +67,7 @@ class MultiBrowserAgent:
                 if urls:
                     self._open_in_brave(urls)
                     for t in simple_tabs:
-                        results.append(f"✅ {t.get('title', 'Tab')} — opened")
+                        results.append(f"âœ… {t.get('title', 'Tab')} â€” opened")
 
             # Handle complex tabs (need typing/clicking) via Playwright + Brave
             if complex_tabs:
@@ -75,7 +75,7 @@ class MultiBrowserAgent:
                 results.extend(complex_results)
 
             elapsed = time.time() - start_time
-            logger.info(f"MultiBrowser done in {elapsed:.1f}s — {len(results)} tabs")
+            logger.info(f"MultiBrowser done in {elapsed:.1f}s â€” {len(results)} tabs")
 
             summary = self._build_summary(results)
             return {"status": "success", "message": summary}
@@ -118,7 +118,7 @@ class MultiBrowserAgent:
             urls = [t["url"] for t in tabs if t.get("url")]
             if urls:
                 self._open_in_brave(urls)
-            return [f"⚠️ {t.get('title', 'Tab')} — opened (interaction skipped)" for t in tabs]
+            return [f"âš ï¸ {t.get('title', 'Tab')} â€” opened (interaction skipped)" for t in tabs]
 
     async def _run_complex(self, tabs: List[Dict]) -> List[str]:
         """Run complex tab interactions using Playwright with Brave."""
@@ -157,11 +157,11 @@ class MultiBrowserAgent:
                     for action in actions:
                         await self._do_action(page, action)
 
-                    results.append(f"✅ {title} — done")
+                    results.append(f"âœ… {title} â€” done")
                 except Exception as e:
-                    results.append(f"❌ {tab.get('title', 'Tab')} — {str(e)[:40]}")
+                    results.append(f"âŒ {tab.get('title', 'Tab')} â€” {str(e)[:40]}")
 
-            # Don't close browser — leave open for user
+            # Don't close browser â€” leave open for user
             # await browser.close()
             await pw.stop()
 
@@ -171,7 +171,7 @@ class MultiBrowserAgent:
             urls = [t["url"] for t in tabs if t.get("url")]
             if urls:
                 self._open_in_brave(urls)
-            results = [f"⚠️ {t.get('title', 'Tab')} — opened (basic)" for t in tabs]
+            results = [f"âš ï¸ {t.get('title', 'Tab')} â€” opened (basic)" for t in tabs]
 
         return results
 
@@ -220,7 +220,7 @@ class MultiBrowserAgent:
             await asyncio.sleep(2)
 
     def _parse_goal(self, goal: str) -> List[Dict]:
-        """Fast regex-based parsing — no AI needed for common patterns."""
+        """Fast regex-based parsing â€” no AI needed for common patterns."""
         goal_lower = goal.lower()
         tabs = []
 
@@ -273,7 +273,7 @@ class MultiBrowserAgent:
             query = self._extract_after(text, ["pe", "par", "mein", "search", "play", "bajao", "laga"])
             if query:
                 return {
-                    "title": f"YouTube — {query[:30]}",
+                    "title": f"YouTube â€” {query[:30]}",
                     "url": f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}",
                     "needs_interaction": False,
                 }
@@ -283,14 +283,14 @@ class MultiBrowserAgent:
         if "tradingview" in text or "trading view" in text or ("chart" in text and any(s in text for s in ["nvda", "nvidia", "nifty", "reliance", "btc", "sensex", "aapl", "tsla", "banknifty"])):
             symbol = self._extract_symbol(text)
             url = f"https://www.tradingview.com/chart/?symbol={symbol}" if symbol else "https://www.tradingview.com/chart/"
-            return {"title": f"TradingView — {symbol or 'Chart'}", "url": url, "needs_interaction": False}
+            return {"title": f"TradingView â€” {symbol or 'Chart'}", "url": url, "needs_interaction": False}
 
         # Prime Video
         if "prime" in text or "primevideo" in text:
             query = self._extract_show(text)
             if query:
                 url = f"https://www.primevideo.com/search?phrase={query.replace(' ', '+')}"
-                return {"title": f"Prime Video — {query[:30]}", "url": url, "needs_interaction": False}
+                return {"title": f"Prime Video â€” {query[:30]}", "url": url, "needs_interaction": False}
             return {"title": "Prime Video", "url": "https://www.primevideo.com", "needs_interaction": False}
 
         # Netflix
@@ -298,7 +298,7 @@ class MultiBrowserAgent:
             query = self._extract_show(text)
             if query:
                 url = f"https://www.netflix.com/search?q={query.replace(' ', '+')}"
-                return {"title": f"Netflix — {query[:30]}", "url": url, "needs_interaction": False}
+                return {"title": f"Netflix â€” {query[:30]}", "url": url, "needs_interaction": False}
             return {"title": "Netflix", "url": "https://www.netflix.com", "needs_interaction": False}
 
         # Amazon
@@ -306,7 +306,7 @@ class MultiBrowserAgent:
             query = self._extract_after(text, ["pe", "par", "search", "dhund", "khoj"])
             if query:
                 url = f"https://www.amazon.in/s?k={query.replace(' ', '+')}"
-                return {"title": f"Amazon — {query[:30]}", "url": url, "needs_interaction": False}
+                return {"title": f"Amazon â€” {query[:30]}", "url": url, "needs_interaction": False}
             return {"title": "Amazon", "url": "https://www.amazon.in", "needs_interaction": False}
 
         # Flipkart
@@ -314,7 +314,7 @@ class MultiBrowserAgent:
             query = self._extract_after(text, ["pe", "par", "search", "dhund"])
             if query:
                 url = f"https://www.flipkart.com/search?q={query.replace(' ', '+')}"
-                return {"title": f"Flipkart — {query[:30]}", "url": url, "needs_interaction": False}
+                return {"title": f"Flipkart â€” {query[:30]}", "url": url, "needs_interaction": False}
             return {"title": "Flipkart", "url": "https://www.flipkart.com", "needs_interaction": False}
 
         # Google
@@ -322,7 +322,7 @@ class MultiBrowserAgent:
             query = self._extract_after(text, ["pe", "par", "search", "khoj"])
             if query:
                 url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
-                return {"title": f"Google — {query[:30]}", "url": url, "needs_interaction": False}
+                return {"title": f"Google â€” {query[:30]}", "url": url, "needs_interaction": False}
             return {"title": "Google", "url": "https://www.google.com", "needs_interaction": False}
 
         # Spotify (web)
@@ -495,7 +495,7 @@ Rules:
                 from google.genai import types
                 client = genai.Client(api_key=GEMINI_API_KEY)
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash-lite", contents=prompt,
+                    model="gemini-2.5-flash-lite", contents=prompt,
                     config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=600)
                 )
                 return response.text.strip()
@@ -506,9 +506,10 @@ Rules:
 
     def _build_summary(self, results: List[str]) -> str:
         """Build short summary."""
-        done = sum(1 for r in results if "✅" in r)
+        done = sum(1 for r in results if "âœ…" in r)
         total = len(results)
         lines = "\n".join(f"  {r}" for r in results)
         if done == total:
             return f"Done! {total} tabs khol diye Brave mein:\n{lines}"
         return f"{done}/{total} tabs ready:\n{lines}"
+

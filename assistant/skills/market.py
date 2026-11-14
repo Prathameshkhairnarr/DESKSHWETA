@@ -93,56 +93,64 @@ def get_stock_market() -> Dict[str, str]:
 
 
 @resilient_skill(retries=2, delay=1.0, circuit_breaker_threshold=5)
-def get_news(topic: str = "india") -> Dict[str, str]:
+def get_news(topic: str = "india", language: str = "") -> Dict[str, str]:
     """
     Get top news headlines using free RSS/API.
+    Returns TTS-friendly natural speech (no numbered lists).
 
     Args:
         topic: News topic (india, technology, sports, business, etc.)
+        language: "hi" for Hindi output, "en" for English, empty = auto-detect
     """
+    import re as _re
+
+    def _strip_source(title: str) -> str:
+        """Remove ' - Source Name' or ' - www.source.com' suffix from headlines."""
+        return _re.sub(r'\s*[-–—]\s*(?:[A-Z][\w\s&.\']+|www\.\S+)$', '', title).strip()
+
+    def _clean_title(title: str) -> str:
+        t = title.replace("&amp;", "&").replace("&quot;", '"').replace("&#39;", "'")
+        t = _strip_source(t)
+        t = _re.sub(r'\s+', ' ', t).strip()
+        return t
+
     try:
-        # Use Google News RSS feed (free, no key)
-        topic_map = {
-            "india": "CAAqIQgKIhtDQkFTRGdvSUwyMHZNRE55YXpBU0FtVnVLQUFQAQ",
-            "technology": "CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FtVnVHZ0pKVGlnQVAB",
-            "sports": "CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp1ZEdvU0FtVnVHZ0pKVGlnQVAB",
-            "business": "CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pKVGlnQVAB",
-            "entertainment": "CAAqJggKIiBDQkFTRWdvSUwyMHZNREpxYW5RU0FtVnVHZ0pKVGlnQVAB",
-        }
+        headlines = []
 
-        # Simple approach: use newsdata.io free tier or scrape
-        # Using a simple free news API
-        url = f"https://newsdata.io/api/1/latest?country=in&language=en,hi&q={topic}&apikey=pub_0"
-        resp = requests.get(url, timeout=8)
+        # Try Google News RSS first (always works, no API key)
+        hl_lang = "hi" if language == "hi" else "en-IN"
+        rss_url = f"https://news.google.com/rss/search?q={topic}+india&hl={hl_lang}&gl=IN"
+        resp = requests.get(rss_url, timeout=8)
+        if resp.status_code == 200:
+            titles = _re.findall(r"<title>(.*?)</title>", resp.text)
+            headlines = [_clean_title(t) for t in titles[2:5] if t.strip()]
 
-        # If that fails, use alternative
-        if resp.status_code != 200:
-            # Fallback: use Google News RSS
-            rss_url = f"https://news.google.com/rss/search?q={topic}+india&hl=en-IN&gl=IN"
-            resp = requests.get(rss_url, timeout=8)
-            # Parse RSS XML simply
-            import re
-            titles = re.findall(r"<title>(.*?)</title>", resp.text)
-            headlines = titles[2:7]  # Skip first 2 (feed title)
-            if headlines:
-                msg = f"Top {topic} news:\n"
-                for i, h in enumerate(headlines, 1):
-                    # Clean HTML entities
-                    h = h.replace("&amp;", "&").replace("&quot;", '"')
-                    msg += f"  {i}. {h}\n"
-                return {"status": "success", "message": msg}
+        if not headlines:
+            # Fallback: newsdata.io
+            news_lang = "hi" if language == "hi" else "en"
+            url = f"https://newsdata.io/api/1/latest?country=in&language={news_lang}&q={topic}&apikey=pub_0"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                if "results" in data and data["results"]:
+                    headlines = [_clean_title(a.get("title", "")) for a in data["results"][:3]]
 
-        # Parse newsdata response
-        data = resp.json()
-        if "results" in data and data["results"]:
-            headlines = data["results"][:5]
-            msg = f"Top {topic} news:\n"
-            for i, article in enumerate(headlines, 1):
-                title = article.get("title", "")
-                msg += f"  {i}. {title}\n"
-            return {"status": "success", "message": msg}
+        if not headlines:
+            return {"status": "error", "message": "News nahi mil payi." if language == "hi" else "Could not fetch news."}
 
-        return {"status": "error", "message": "News nahi mil payi."}
+        # Build TTS-friendly spoken output (no numbers, natural connectors)
+        if language == "hi":
+            connectors = ["Pehli khabar", "Doosri khabar", "Teesri khabar"]
+            msg = "Aaj ki top khabaren. "
+            for i, h in enumerate(headlines):
+                msg += f"{connectors[i]}, {h}. "
+        else:
+            connectors = ["First", "Second", "Third"]
+            msg = "Here are today's top headlines. "
+            for i, h in enumerate(headlines):
+                msg += f"{connectors[i]}, {h}. "
+
+        return {"status": "success", "message": msg.strip()}
 
     except Exception as e:
         logger.error(f"News error: {e}")

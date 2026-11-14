@@ -30,7 +30,6 @@ from assistant.skills import sysinfo, notes, windows, briefing, whatsapp, vision
 from assistant.skills import market as market_skills
 from assistant.skills import spotify as spotify_skills
 from assistant.skills import email_skill
-from assistant.skills import trading as trading_skills
 from assistant.skills.gesture import GestureController
 from assistant.skills.browser_agent import BrowserAgent
 from assistant.skills.personality import PersonalityManager, MemoryStore, HealthReminders
@@ -280,17 +279,9 @@ class DesktopController:
             "spotify_shuffle": self._spotify_shuffle,
             # Email
             "send_email": self._send_email,
-            # Trading
-            "open_tradingview": self._open_tradingview,
-            "draw_trend_line": self._draw_trend_line,
-            "draw_horizontal_line": self._draw_horizontal_line,
-            "draw_rectangle": self._draw_rectangle,
-            "draw_fibonacci": self._draw_fibonacci,
-            "mark_support_resistance": self._mark_support_resistance,
-            "undo_drawing": self._undo_drawing,
-            "clear_drawings": self._clear_drawings,
-            "change_symbol": self._change_symbol,
-            "change_timeframe": self._change_timeframe,
+            # Food & Travel (browser agent — stops before payment)
+            "order_food": self._order_food,
+            "book_flight": self._book_flight,
         }
 
     def execute(self, action: str, params: Dict[str, Any]) -> Dict[str, str]:
@@ -417,11 +408,26 @@ class DesktopController:
         query = params.get("query", "")
         if not query:
             return {"status": "error", "message": "Search query not provided."}
-            
+
+        # If a song is already playing, replace it IN THE SAME tab: close the
+        # current media tab first so we don't pile up a new tab every time the
+        # user asks for another song ("ye gana pasand nahi aaya").
+        if getattr(self, "_music_playing", False):
+            try:
+                browser.close_current_media_tab()
+            except Exception as exc:
+                logger.debug("close media tab failed: %s", exc)
+
         # Check if it is a generic music category query to route to music.py recommendation engine
         query_lower = query.lower().strip()
         query_words = query_lower.split()
-        music_fillers = {"play", "song", "songs", "music", "gana", "gane", "chalao", "sunaao", "lagao", "playlist", "hits", "some", "a", "an", "the", "pe", "ko", "latest", "new", "mussic", "mussics"}
+        music_fillers = {"play", "song", "songs", "music", "gana", "gane", "gaana", "chalao", "chala", "baja", "bajao",
+                         "sunaao", "sunao", "suna", "lagao", "laga", "playlist", "hits", "some", "a", "an", "the",
+                         "pe", "par", "ko", "koi", "ek", "sa", "si", "se", "zara", "thoda", "please", "bhi", "do", "de",
+                         "latest", "new", "mussic", "mussics", "youtube", "pr", "yaar", "acha"}
+        # Generic quality words → user just wants "a good song", no specific track
+        generic_quality = {"acha", "accha", "achha", "good", "nice", "best", "badhiya", "mast", "cool",
+                           "random", "behtreen", "vadiya", "superhit", "trending", "popular", "famous"}
         meaningful_words = [w for w in query_words if w not in music_fillers]
         
         category_keywords = {
@@ -453,20 +459,39 @@ class DesktopController:
             resolved_cats = [category_keywords[w] for w in meaningful_words if w in category_keywords]
             if resolved_cats:
                 target_cat = resolved_cats[0]
-                
+
+        # Generic request ("acha sa song", "koi gana bajao", "play music") with no
+        # specific track/category → pick a curated good song instead of a vague
+        # YouTube search (which returns random junk). Lean to the user's language.
+        if not target_cat:
+            non_generic = [w for w in meaningful_words if w not in generic_quality]
+            if not non_generic:
+                import random as _rnd
+                try:
+                    pref = (self.memory.get("preferred_language") or "").lower()
+                except Exception:
+                    pref = ""
+                if "marathi" in pref:
+                    target_cat = _rnd.choice(["hindi", "marathi"])
+                else:
+                    target_cat = _rnd.choice(["hindi", "hindi", "english"])  # lean Indian
+
         if target_cat:
             from assistant.skills import music
             result = music.get_music_recommendation(target_cat)
-            if result.get("status") == "success" and "track" in result:
-                self._trigger_music_vibe(result["track"])
+            if result.get("status") == "success":
+                self._music_playing = True
+                if "track" in result:
+                    self._trigger_music_vibe(result["track"])
             return result
 
         result = browser.play_youtube(query)
         # Trigger music vibe when playing music
         if result.get("status") == "success":
+            self._music_playing = True
             from assistant.skills import music
             music.learn_song_in_background(query)
-            
+
             music_words = ["song", "gana", "music", "playlist", "band", "singer", "lofi", "sad", "happy", "chill", "workout"]
             if any(w in query.lower() for w in music_words):
                 self._trigger_music_vibe(query)
@@ -729,6 +754,7 @@ class DesktopController:
 
     def _browser_close_tab(self, params: Dict) -> Dict[str, str]:
         self._stop_music_vibe()
+        self._music_playing = False
         return browser.browser_close_tab()
 
     def _browser_switch_tab(self, params: Dict) -> Dict[str, str]:
@@ -1080,7 +1106,8 @@ class DesktopController:
 
     def _get_news(self, params: Dict) -> Dict[str, str]:
         topic = params.get("topic", "india")
-        return market_skills.get_news(topic)
+        language = params.get("language", "")
+        return market_skills.get_news(topic, language=language)
 
     def _get_gold_price(self, params: Dict) -> Dict[str, str]:
         return market_skills.get_gold_price()
@@ -1329,50 +1356,43 @@ class DesktopController:
             return {"status": "error", "message": "Email ka reason/message batao."}
         return email_skill.send_email_to_contact(to, reason)
 
-    # --- Trading ---
+    # --- Food & Travel (delegates to browser agent, STOPS before payment) ---
 
-    def _open_tradingview(self, params: Dict) -> Dict[str, str]:
-        symbol = params.get("symbol", "")
-        return trading_skills.open_tradingview(symbol)
-
-    def _draw_trend_line(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.draw_trend_line(
-            int(params.get("start_x", 0)), int(params.get("start_y", 0)),
-            int(params.get("end_x", 0)), int(params.get("end_y", 0))
+    def _order_food(self, params: Dict) -> Dict[str, str]:
+        if not self.browser_agent:
+            return {"status": "error", "message": "Browser agent available nahi hai, isliye order nahi kar sakti."}
+        query = params.get("query", params.get("goal", params.get("item", ""))).strip()
+        if not query:
+            return {"status": "error", "message": "Kya order karna hai batao — jaise 'Swiggy se paneer biryani'."}
+        platform = "Zomato" if "zomato" in query.lower() else "Swiggy"
+        goal = (
+            f"Open {platform} in the browser. Search for and add to cart exactly what the user asked: '{query}'. "
+            f"Use the already-saved login and delivery address if present. "
+            f"Go up to the cart/checkout review page and STOP there. "
+            f"Do NOT place the order, do NOT pay, do NOT enter any OTP, card, UPI or password. "
+            f"Report back what is in the cart and the total amount so the user can review and pay themselves."
         )
+        result = self.browser_agent.execute(goal)
+        # Normalise so the spoken reply makes the payment boundary clear
+        if isinstance(result, dict) and result.get("status") == "success":
+            msg = result.get("message", "")
+            result["message"] = (msg + " — Cart ready hai. Payment aap khud confirm karna.").strip()
+        return result
 
-    def _draw_horizontal_line(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.draw_horizontal_line(int(params.get("y", 0)))
-
-    def _draw_rectangle(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.draw_rectangle(
-            int(params.get("start_x", 0)), int(params.get("start_y", 0)),
-            int(params.get("end_x", 0)), int(params.get("end_y", 0))
+    def _book_flight(self, params: Dict) -> Dict[str, str]:
+        if not self.browser_agent:
+            return {"status": "error", "message": "Browser agent available nahi hai, isliye flight search nahi kar sakti."}
+        query = params.get("query", params.get("goal", "")).strip()
+        if not query:
+            return {"status": "error", "message": "Flight details batao — jaise 'kal Pune se Delhi ki flight'."}
+        goal = (
+            f"Open Google Flights (flights.google.com) in the browser and search flights for: '{query}'. "
+            f"Show the top 3-4 cheapest options with airline, time and price. "
+            f"STOP at the results page. Do NOT book, do NOT pay, do NOT enter passenger, card or OTP details. "
+            f"Report the best options so the user can choose and book themselves."
         )
-
-    def _draw_fibonacci(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.draw_fibonacci(
-            int(params.get("start_x", 0)), int(params.get("start_y", 0)),
-            int(params.get("end_x", 0)), int(params.get("end_y", 0))
-        )
-
-    def _mark_support_resistance(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.mark_support_resistance()
-
-    def _undo_drawing(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.undo_drawing()
-
-    def _clear_drawings(self, params: Dict) -> Dict[str, str]:
-        return trading_skills.clear_drawings()
-
-    def _change_symbol(self, params: Dict) -> Dict[str, str]:
-        symbol = params.get("symbol", "")
-        if not symbol:
-            return {"status": "error", "message": "Symbol batao (e.g. NIFTY, RELIANCE, BTCUSD)"}
-        return trading_skills.change_symbol(symbol)
-
-    def _change_timeframe(self, params: Dict) -> Dict[str, str]:
-        tf = params.get("timeframe", params.get("tf", ""))
-        if not tf:
-            return {"status": "error", "message": "Timeframe batao (1m, 5m, 15m, 1h, 4h, 1d)"}
-        return trading_skills.change_timeframe(tf)
+        result = self.browser_agent.execute(goal)
+        if isinstance(result, dict) and result.get("status") == "success":
+            msg = result.get("message", "")
+            result["message"] = (msg + " — Booking aur payment aap khud karna.").strip()
+        return result

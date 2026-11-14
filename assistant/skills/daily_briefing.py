@@ -1,6 +1,6 @@
-"""
+﻿"""
 Smart Daily Briefing for Shweta AI Desktop Assistant.
-Personalized morning briefing — weather, date, reminders, crypto, fun fact.
+Personalized morning briefing â€” weather, date, reminders, crypto, fun fact.
 Triggers on Windows startup (once per day) or on demand.
 """
 
@@ -42,36 +42,36 @@ HINDI_MONTHS = [
 
 # --- Hardcoded Fun Facts (offline fallback, 30 facts) ---
 HARDCODED_FACTS = [
-    "Aur haan — Octopus ke teen dil hote hain aur khoon neela hota hai!",
-    "Aur haan — Honey kabhi kharab nahi hota, 3000 saal purana honey bhi khaane layak hota hai!",
-    "Aur haan — Ek din mein insaan average 48 baar apna phone check karta hai!",
-    "Aur haan — Bananas technically berries hain lekin strawberries nahi hain scientifically!",
-    "Aur haan — Ek insaan apni poori life mein 2 swimming pools bhar ke thook produce karta hai!",
-    "Aur haan — Dolphins ek aankh khol ke sote hain taaki danger se bach sakein!",
-    "Aur haan — Eiffel Tower garmi mein 15 cm lamba ho jaata hai iron expand hone ki wajah se!",
-    "Aur haan — Teri body mein itna iron hai ki usse ek 3 inch ki nail ban sakti hai!",
-    "Aur haan — Cows ke best friends hote hain aur wo alag hone pe stressed ho jaati hain!",
-    "Aur haan — Ek average insaan apni life ka 6 mahina red lights pe wait karta hai!",
-    "Aur haan — Sharks dinosaurs se bhi pehle se exist karte hain — 400 million years!",
-    "Aur haan — Tera brain 80% paani hai — isliye dehydration se headache hota hai!",
-    "Aur haan — Ek lightning bolt ka temperature sun ki surface se 5 guna zyada hota hai!",
-    "Aur haan — Koalas din mein 22 ghante sote hain — meri dream life hai ye!",
-    "Aur haan — Tera nose 1 trillion different smells detect kar sakta hai!",
-    "Aur haan — Space mein astronauts 2 inch lambe ho jaate hain kyunki gravity nahi hoti!",
-    "Aur haan — Ek average cloud ka weight 500,000 kg hota hai — haan sach mein!",
-    "Aur haan — Butterflies apne pair se taste karte hain — weird but true!",
-    "Aur haan — Tera heart ek din mein 100,000 baar beat karta hai!",
-    "Aur haan — Venus pe ek din ek saal se bhi lamba hota hai!",
-    "Aur haan — Ants kabhi sote nahi hain — 24/7 kaam karte hain bechare!",
-    "Aur haan — Ek teaspoon neutron star ka weight 6 billion tons hota hai!",
-    "Aur haan — Cats apni life ka 70% sote hue bitaati hain — goals hai ye!",
-    "Aur haan — Tera DNA sun tak stretch kiya jaye toh 600 baar reach karega!",
-    "Aur haan — Flamingos actually white hote hain, pink colour unke food se aata hai!",
-    "Aur haan — Ek pencil se 35 miles lambi line draw ho sakti hai!",
-    "Aur haan — Tera left lung right lung se chhota hota hai — dil ko jagah dene ke liye!",
-    "Aur haan — Wombat ki potty cube shaped hoti hai — nature weird hai bhai!",
-    "Aur haan — Ek insaan apni life mein average 25 saal so ke bitaata hai!",
-    "Aur haan — Tera phone mein toilet seat se 10 guna zyada bacteria hote hain!",
+    "Aur haan â€” Octopus ke teen dil hote hain aur khoon neela hota hai!",
+    "Aur haan â€” Honey kabhi kharab nahi hota, 3000 saal purana honey bhi khaane layak hota hai!",
+    "Aur haan â€” Ek din mein insaan average 48 baar apna phone check karta hai!",
+    "Aur haan â€” Bananas technically berries hain lekin strawberries nahi hain scientifically!",
+    "Aur haan â€” Ek insaan apni poori life mein 2 swimming pools bhar ke thook produce karta hai!",
+    "Aur haan â€” Dolphins ek aankh khol ke sote hain taaki danger se bach sakein!",
+    "Aur haan â€” Eiffel Tower garmi mein 15 cm lamba ho jaata hai iron expand hone ki wajah se!",
+    "Aur haan â€” Teri body mein itna iron hai ki usse ek 3 inch ki nail ban sakti hai!",
+    "Aur haan â€” Cows ke best friends hote hain aur wo alag hone pe stressed ho jaati hain!",
+    "Aur haan â€” Ek average insaan apni life ka 6 mahina red lights pe wait karta hai!",
+    "Aur haan â€” Sharks dinosaurs se bhi pehle se exist karte hain â€” 400 million years!",
+    "Aur haan â€” Tera brain 80% paani hai â€” isliye dehydration se headache hota hai!",
+    "Aur haan â€” Ek lightning bolt ka temperature sun ki surface se 5 guna zyada hota hai!",
+    "Aur haan â€” Koalas din mein 22 ghante sote hain â€” meri dream life hai ye!",
+    "Aur haan â€” Tera nose 1 trillion different smells detect kar sakta hai!",
+    "Aur haan â€” Space mein astronauts 2 inch lambe ho jaate hain kyunki gravity nahi hoti!",
+    "Aur haan â€” Ek average cloud ka weight 500,000 kg hota hai â€” haan sach mein!",
+    "Aur haan â€” Butterflies apne pair se taste karte hain â€” weird but true!",
+    "Aur haan â€” Tera heart ek din mein 100,000 baar beat karta hai!",
+    "Aur haan â€” Venus pe ek din ek saal se bhi lamba hota hai!",
+    "Aur haan â€” Ants kabhi sote nahi hain â€” 24/7 kaam karte hain bechare!",
+    "Aur haan â€” Ek teaspoon neutron star ka weight 6 billion tons hota hai!",
+    "Aur haan â€” Cats apni life ka 70% sote hue bitaati hain â€” goals hai ye!",
+    "Aur haan â€” Tera DNA sun tak stretch kiya jaye toh 600 baar reach karega!",
+    "Aur haan â€” Flamingos actually white hote hain, pink colour unke food se aata hai!",
+    "Aur haan â€” Ek pencil se 35 miles lambi line draw ho sakti hai!",
+    "Aur haan â€” Tera left lung right lung se chhota hota hai â€” dil ko jagah dene ke liye!",
+    "Aur haan â€” Wombat ki potty cube shaped hoti hai â€” nature weird hai bhai!",
+    "Aur haan â€” Ek insaan apni life mein average 25 saal so ke bitaata hai!",
+    "Aur haan â€” Tera phone mein toilet seat se 10 guna zyada bacteria hote hain!",
 ]
 
 
@@ -178,7 +178,7 @@ def fetch_fun_fact() -> str:
 
 def _fetch_fact_from_ai() -> Optional[str]:
     """Try to get fun fact from Groq/Gemini."""
-    prompt = "Give me ONE interesting fun fact in exactly one Hinglish sentence. Start with 'Aur haan —'. Make it genuinely surprising and unique. No markdown. Just the single sentence."
+    prompt = "Give me ONE interesting fun fact in exactly one Hinglish sentence. Start with 'Aur haan â€”'. Make it genuinely surprising and unique. No markdown. Just the single sentence."
 
     # Try Groq
     if GROQ_API_KEY:
@@ -204,13 +204,13 @@ def _fetch_fact_from_ai() -> Optional[str]:
             from google.genai import types
             client = genai.Client(api_key=GEMINI_API_KEY)
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite", contents=prompt,
+                model="gemini-2.5-flash-lite", contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.9, max_output_tokens=80)
             )
             text = response.text.strip()
             if text and len(text) > 10:
                 if not text.startswith("Aur haan"):
-                    text = "Aur haan — " + text
+                    text = "Aur haan â€” " + text
                 return text[:150]
         except Exception:
             pass
@@ -275,14 +275,14 @@ def generate_briefing_script() -> str:
     # Reminders
     reminders = fetch_reminders()
     if len(reminders) == 0:
-        sections.append("Aaj koi pending kaam nahi hai — chill din hai!")
+        sections.append("Aaj koi pending kaam nahi hai â€” chill din hai!")
     elif len(reminders) == 1:
-        sections.append(f"Tere paas ek pending kaam hai — {reminders[0].get('text', 'kuch hai')}.")
+        sections.append(f"Tere paas ek pending kaam hai â€” {reminders[0].get('text', 'kuch hai')}.")
     elif len(reminders) <= 3:
         items = ", ".join(r.get("text", "")[:30] for r in reminders[:3])
-        sections.append(f"Tere paas {len(reminders)} pending kaam hain — {items}.")
+        sections.append(f"Tere paas {len(reminders)} pending kaam hain â€” {items}.")
     else:
-        sections.append(f"Aaj tera schedule tight hai bhai — {len(reminders)} kaam pending hain!")
+        sections.append(f"Aaj tera schedule tight hai bhai â€” {len(reminders)} kaam pending hain!")
 
     # Crypto
     crypto = fetch_crypto()
@@ -296,11 +296,11 @@ def generate_briefing_script() -> str:
 
     # Personality closer
     if len(reminders) == 0:
-        closer = f"Aaj chill din hai tera {user_name} — enjoy kar!"
+        closer = f"Aaj chill din hai tera {user_name} â€” enjoy kar!"
     elif len(reminders) <= 2:
-        closer = f"Thoda kaam hai aaj — ho jaayega easily! Acha din ho."
+        closer = f"Thoda kaam hai aaj â€” ho jaayega easily! Acha din ho."
     else:
-        closer = f"Busy day hai aaj — ek ek karke nipata! All the best."
+        closer = f"Busy day hai aaj â€” ek ek karke nipata! All the best."
 
     sections.append(closer)
 
@@ -344,7 +344,7 @@ def mark_briefed_today() -> None:
 
 
 def reset_briefing_state() -> None:
-    """Reset state (for testing — allows re-triggering briefing)."""
+    """Reset state (for testing â€” allows re-triggering briefing)."""
     state = _load_state()
     state.pop("last_briefed_date", None)
     _save_state(state)
@@ -437,3 +437,4 @@ class DailyBriefingManager:
             return {"status": "success", "message": script}
         except Exception as e:
             return {"status": "error", "message": f"Briefing generate nahi ho paya: {e}"}
+

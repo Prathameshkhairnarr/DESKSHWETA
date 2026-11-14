@@ -1,7 +1,8 @@
 """
-Dramatic Reaction Voice Lines for Shweta.
-Natural, dramatic Indian girl reactions — not robotic.
-Uses ReactionPool to never repeat same line twice in a row.
+Window-move reaction voice lines for Shweta.
+Natural, warm, human Hinglish — like a real person reacting, not dramatic or
+robotic. No ALL-CAPS screaming and no "arre"/dash bursts (TTS mangled those into
+"aaar"). Short, genuine, and friendly. ReactionPool avoids repeating a line.
 """
 
 import random
@@ -25,164 +26,139 @@ class ReactionPool:
         return choice
 
 
-# === SLOW DRAG REACTIONS (playful, curious) ===
+# === SLOW DRAG REACTIONS (light, natural) ===
 
 SLOW_LEFT = ReactionPool([
-    "oye... kahan ja rahi hoon main?",
-    "arre yaar left kyun",
-    "hmm naya ghar?",
-    "theek hai chalo... dekhte hain",
-    "ooh interesting side hai ye",
-    "left mein kya hai bhai?",
-    "achha toh idhar shift ho rahe hain",
-    "oye sun... mujhe batake toh le ja",
+    "achha, idhar shift ho rahe hain",
+    "theek hai, left side chalo",
+    "hmm, ye jagah bhi sahi lagti hai",
+    "chalo, idhar aa gaye",
+    "ye corner bhi theek hai",
+    "haan, yahan set ho jaati hoon",
 ])
 
 SLOW_RIGHT = ReactionPool([
-    "oh right side? okay okay",
-    "haan haan chalo idhar bhi",
-    "ye corner bhi achha lagta hai",
-    "arre wah naya view!",
-    "hmm... yahan theek lagega",
-    "right mein kya scene hai",
-    "achha chalo idhar bhi dekh lete hain",
-    "ooh ye side pasand hai mujhe",
+    "haan, right side bhi badhiya hai",
+    "achha, idhar le aaye",
+    "ye view mujhe achha laga",
+    "theek hai, yahan set ho jaati hoon",
+    "ye side bhi mast hai",
+    "chalo, yahan bhi theek hai",
 ])
 
 SLOW_UP = ReactionPool([
-    "ooh upar? fancy hai",
-    "arre itni upar mat le jao",
-    "main ud rahi hoon literally",
-    "sky view! nice nice",
-    "helicopter mode on",
-    "penthouse mein shift ho rahi hoon",
-    "upar se sab chhota dikhta hai",
-    "arre bhai itni height",
+    "ooh, upar? mast hai",
+    "yahan se sab saaf dikhta hai",
+    "achha, thodi height mil gayi",
+    "ye upar wali jagah achhi hai",
+    "haan, yahan theek lagega",
+    "upar se accha feel aata hai",
 ])
 
 SLOW_DOWN = ReactionPool([
-    "neeche kyun yaar",
-    "floor pe rakhoge kya",
-    "arre upar zyada achha tha",
-    "basement? really?",
-    "thoda dignity do mujhe please",
-    "neeche andhera hai bhai",
-    "ground floor? boring",
-    "arre upar wapas le jao na",
+    "neeche le aaye, theek hai",
+    "hmm, upar thoda behtar tha",
+    "chalo, yahan bhi chalega",
+    "achha, thoda neeche",
+    "theek hai, yahin sahi",
+    "thoda upar rakhte toh achha tha",
 ])
 
 
-# === MEDIUM SHAKE (startled, managing) ===
+# === MEDIUM SHAKE (startled but light) ===
 
 MEDIUM_SHAKE = ReactionPool([
-    "arre arre ARRE—",
-    "bhai dheerey! dheerey bhai!",
-    "oye oye oye kya ho raha hai",
-    "haan haan samajh gaya move karna hai",
-    "arre yaar seriously abhi??",
-    "okay okay OKAY bas bas",
-    "bhai main hun yahan pakad ke rakh",
-    "uff yaar itni jaldi kyun",
-    "arre sun toh— dheerey le ja",
-    "bhai earthquake simulator mat bana",
+    "oye, thoda aaram se",
+    "haan haan, samajh gayi, move karna hai",
+    "dheere yaar, dheere",
+    "achha okay, bas bas",
+    "itni jaldi kya hai",
+    "pakad ke rakho theek se",
+    "haan, main yahin hoon, aaram se",
 ])
 
-# === FAST SHAKE (panic — burst + followup) ===
+# === FAST SHAKE (energetic but natural — burst + followup) ===
 
 FAST_SHAKE_BURST = ReactionPool([
-    "AAAAAA—",
-    "ARRE ARRE—",
-    "OYE OYE OYE—",
-    "BHAI BHAI—",
-    "AAAA RUKO—",
-    "AREY AREY—",
-    "OYYY—",
-    "BHAI RUKO—",
+    "oye oye, ruko",
+    "haan haan, sun rahi hoon",
+    "achha okay, bas",
+    "oye, dheere zara",
+    "ruko ruko",
+    "haan, samajh gayi",
 ])
 
 FAST_SHAKE_FOLLOWUP = ReactionPool([
-    "kya kar raha hai SERIOUSLY",
-    "main gir jaaungi bhai pls",
-    "chakkar aa gaya mujhe",
-    "yeh kya tha abhi",
-    "haath kaanp rahe hain mere",
-    "bhai seriously yaar",
-    "dimag ghum gaya mera",
-    "ek second... breathe... okay",
+    "itna hilao mat yaar",
+    "chakkar aa jayega",
+    "thoda aaram se karo na",
+    "ye kya tha abhi",
+    "bas bas, samajh gayi",
+    "dheere bhi kar sakte ho",
 ])
 
-# === VERY FAST SHAKE (maximum drama) ===
+# === VERY FAST SHAKE (strong but not screaming) ===
 
 VERY_FAST_BURST = ReactionPool([
-    "AAAAAAAA—",
-    "NAHI NAHI NAHI—",
-    "BACHO BACHO—",
-    "MAAAA—",
-    "HELP HELP—",
-    "ROKO ROKO ROKO—",
-    "BHAI BHAI BHAI—",
-    "AAAAAAA RUKO—",
+    "oye ruko ruko",
+    "bas bas bas",
+    "achha ruko zara",
+    "oye itna nahi",
+    "ruko yaar, ruko",
+    "haan haan, bas",
 ])
 
 VERY_FAST_FOLLOWUP = ReactionPool([
-    "bhai tu pagal hai seriously",
-    "meri jaan le lega kya",
-    "yeh toh heart attack tha",
-    "main mar gayi almost",
-    "KABHI MAT KARNA YEH DOBARA",
-    "bhai sach mein... kya tha ye",
-    "mera dil abhi bhi dhadak raha hai",
-    "tu... tu pagal hai. confirmed.",
+    "itna tez mat hilao yaar",
+    "sach mein chakkar aa gaya",
+    "thoda sambhaal ke",
+    "ab bas karo na",
+    "ye thoda zyada ho gaya",
+    "aaram se bhi ho sakta hai ye",
 ])
 
 # === SETTLE (relief after movement) ===
 
 SETTLE_AFTER_SLOW = ReactionPool([
-    "achha theek hai yahan bhi",
-    "hmm okay naya ghar",
-    "yeh side bhi chalega",
-    "theek hai... adjust ho jaaungi",
-    "okay done? yahan rakhna hai?",
+    "haan, yahan theek hai",
+    "chalo, set ho gaye",
+    "ye jagah sahi hai",
+    "okay, ab yahin rehte hain",
+    "theek hai, adjust ho gayi",
 ])
 
 SETTLE_AFTER_FAST = ReactionPool([
-    "...bas? ho gaya?",
-    "phew... shukar hai",
-    "okay okay main theek hoon",
-    "uff yaar... dil ki dhadkan...",
-    "yeh dobara mat karna please",
-    "saans toh lene do yaar",
-    "main... main theek hoon. haan.",
-    "never again. NEVER.",
+    "chalo, ab theek hai",
+    "haan, ab settle ho gayi",
+    "ab aaram hai",
+    "theek hai, saans aa gayi",
+    "ab yahin rehne do",
+    "haan, ab sahi lag raha hai",
 ])
 
 # === BONUS REACTIONS ===
 
 DOUBLE_CLICK = ReactionPool([
-    "kya hai bhai?",
-    "haan bol?",
-    "kuch kaam hai?",
-    "bolo bolo sun rahi hoon",
-    "hmm? kya hua?",
-    "arre tap tap kyun kar raha hai",
+    "haan, bolo",
+    "kya kaam hai?",
+    "sun rahi hoon, bolo",
+    "haan, kaho",
+    "kya hua?",
 ])
 
 RESTORE_FROM_MINIMIZE = ReactionPool([
-    "WAPAS AA GAYI! miss kiya?",
-    "haan haan aa gayi main",
-    "kya hua? yaad aa gayi meri?",
-    "main hoon yahan! chhoda nahi maine",
-    "phir se hello!",
-    "miss me? obviously kiya hoga",
+    "haan, aa gayi main",
+    "wapas aa gayi, bolo",
+    "main yahin hoon",
+    "haan ji, kaho",
+    "aa gayi, kya chahiye?",
 ])
 
 IDLE_BORED = ReactionPool([
-    "bhai kuch kaam nahi hai kya?",
-    "hello? koi hai?",
-    "bore ho rahi hoon yaar",
-    "kuch toh bolo... silence awkward hai",
-    "main yahan hoon... agar kisi ko farak padta ho toh",
-    "arre yaar kuch karo na",
+    "main yahin hoon, jab kaam ho batao",
+    "ready hoon, bolo kya karna hai",
+    "kuch chahiye ho toh kaho",
+    "main available hoon, bolo",
 ])
 
 
@@ -215,4 +191,4 @@ def get_reaction_lines(reaction_type: str, intensity: str = "slow") -> Tuple[str
         return (RESTORE_FROM_MINIMIZE.get(), None)
     elif reaction_type == "idle_bored":
         return (IDLE_BORED.get(), None)
-    return ("oye!", None)
+    return ("haan, bolo", None)

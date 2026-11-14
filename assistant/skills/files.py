@@ -46,19 +46,48 @@ def _get_downloads():
 DOWNLOADS = _get_downloads()
 
 
+def _protected_roots() -> list:
+    """Windows-critical directories that must never be written/renamed/deleted."""
+    sysdrive = os.environ.get("SystemDrive", "C:") + os.sep
+    candidates = [
+        os.environ.get("SystemRoot", r"C:\Windows"),
+        os.path.join(sysdrive, "Windows"),
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        os.path.join(sysdrive, "ProgramData", "Microsoft"),
+        os.path.join(sysdrive, "Boot"),
+        os.path.join(sysdrive, "$Recycle.Bin"),
+        os.path.join(sysdrive, "System Volume Information"),
+    ]
+    roots = []
+    for c in candidates:
+        try:
+            roots.append(Path(c).resolve())
+        except Exception:
+            pass
+    return roots
+
+
 def _is_safe_path(path: Path) -> bool:
     """
-    Check if the path is safe. For Shweta, the user can create files anywhere on their PC,
-    so we allow all absolute paths.
+    Safe for writes/renames/deletes if it is NOT a Windows-critical location.
+    The user can still touch their own files anywhere (Desktop, Documents,
+    other drives, etc.) — only system-critical dirs are protected.
     """
     try:
         abs_path = Path(os.path.abspath(path)).resolve()
-        # Don't allow writing to System32 or Windows root as a basic safety net, but allow everything else
-        if "Windows" in abs_path.parts and "System32" in abs_path.parts:
-            return False
-        return True
     except Exception:
         return False
+    # Never allow the bare drive root itself (e.g. C:\)
+    if abs_path.parent == abs_path:
+        return False
+    for root in _protected_roots():
+        try:
+            if abs_path == root or root in abs_path.parents:
+                return False
+        except Exception:
+            continue
+    return True
 
 
 def _resolve_path(filepath: str) -> Path:
@@ -160,11 +189,22 @@ def delete_file(filename: str) -> Dict[str, str]:
         if not filepath.exists():
             return {"status": "error", "message": f"'{filename}' nahi mila."}
 
+        is_dir = filepath.is_dir()
+        # Prefer the Recycle Bin (reversible) over a permanent delete.
+        try:
+            from send2trash import send2trash as _s2t
+            _s2t(str(filepath))
+            logger.info(f"Moved to Recycle Bin: {filepath}")
+            kind = "Folder" if is_dir else "File"
+            return {"status": "success", "message": f"{kind} Recycle Bin mein daal diya: {filepath.name}"}
+        except ImportError:
+            pass  # library not installed — fall back to permanent delete
+
         if filepath.is_file():
             filepath.unlink()
             logger.info(f"Deleted file: {filepath}")
             return {"status": "success", "message": f"Delete kar diya: {filepath.name}"}
-        elif filepath.is_dir():
+        elif is_dir:
             shutil.rmtree(filepath)
             logger.info(f"Deleted folder: {filepath}")
             return {"status": "success", "message": f"Folder delete kar diya: {filepath.name}"}

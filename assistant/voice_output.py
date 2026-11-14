@@ -55,6 +55,18 @@ MURF_FALCON_ENDPOINTS = [
     "https://global.api.murf.ai/v1/speech/stream",  # Global router endpoint
 ]
 
+# Emotion → Murf voice STYLE. Pooja supports these styles, so matching the voice
+# style to the reply's emotion makes Shweta sound genuinely happy/sad/excited
+# instead of the same flat Conversational tone every time (the "words mein koi
+# emotion nahi" problem). Unknown emotions fall back to the default style.
+EMOTION_TO_MURF_STYLE = {
+    "happy": "Cheerful", "joy": "Excited", "fun": "Cheerful", "playful": "Cheerful",
+    "mast": "Cheerful", "excited": "Excited", "surprised": "Excited", "wink": "Cheerful",
+    "curious": "Conversational", "think": "Calm",
+    "sad": "Sad", "pout": "Sad", "bored": "Calm", "sleepy": "Calm",
+    "relaxed": "Calm", "calm": "Calm", "angry": "Angry", "neutral": "Conversational",
+}
+
 # --- Amazon Polly TTS Configuration (FALLBACK) ---
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
@@ -98,6 +110,10 @@ AUTO_CACHE_MAX_LEN = 40        # Max text length to auto-cache
 # from a previous engine can never be matched again.
 CACHE_ENGINE_SIGNATURE = f"murf:falcon2.1:{MURF_VOICE_ID}:{MURF_LOCALE}:{MURF_STYLE}:pitch{MURF_PITCH}"
 
+# Tiny acknowledgement fillers — played INSTANTLY from cache the moment the user
+# finishes speaking, while the real reply is being generated (perceived latency ~0).
+ACK_FILLERS = ["हाँ", "हम्म", "जी", "ओके"]
+
 # Common phrases to pre-cache at startup (saves Murf credits — spoken from cache instantly).
 PRECACHE_PHRASES = [
     "हाँ बोल", "हाँ बोलो", "ठीक है", "हो गया", "कर दिया",
@@ -105,7 +121,7 @@ PRECACHE_PHRASES = [
     "हाँ कर रही हूँ", "समझ गई", "मस्त हूँ भाई, तू बता",
     "क्या हाल है", "बता क्या करना है", "सॉरी समझ नहीं आया",
     "फिर से बोल", "कुछ और", "ठीक है कर दिया", "अरे यार, कितना सन्नाटा है...",
-]
+] + ACK_FILLERS
 
 # Lock for thread-safe cache access
 _cache_lock = threading.Lock()
@@ -233,6 +249,7 @@ class VoiceOutput:
 
     def __init__(self) -> None:
         self.is_speaking: bool = False
+        self._current_emotion: str = "neutral"  # drives the Murf voice style
         self._speak_lock = threading.Lock()
         self._interrupt_event = threading.Event()
         self._murf_available: bool = False
@@ -285,6 +302,15 @@ class VoiceOutput:
         except ImportError:
             logger.warning("sounddevice not available for playback.")
 
+        # Check pygame ONCE at startup instead of importing (and failing) on every
+        # playback — avoids a per-reply ImportError + log-spam when pygame is absent.
+        self._pygame_available = False
+        try:
+            import pygame  # noqa: F401
+            self._pygame_available = True
+        except Exception:
+            pass
+
         # Pre-cache common phrases in background (saves Murf credits — one-time)
         threading.Thread(target=self._prebuild_cache, daemon=True, name="TTS-Precache").start()
 
@@ -292,16 +318,31 @@ class VoiceOutput:
         """Set callback for lip sync. Called with volume (0.0-1.0) at ~30fps."""
         self._lip_sync_callback = callback
 
+    def set_emotion_hint(self, emotion: Optional[str]) -> None:
+        """Tell the voice which emotion the next reply carries, so the Murf voice
+        style matches (happy sounds cheerful, sad sounds sad, etc.)."""
+        self._current_emotion = (emotion or "neutral").strip().lower() or "neutral"
+
+    def _style_for_emotion(self, emotion: Optional[str] = None) -> str:
+        """Map an emotion to a Murf voice style (falls back to the default style)."""
+        key = (emotion if emotion is not None else self._current_emotion or "neutral").strip().lower()
+        return EMOTION_TO_MURF_STYLE.get(key, MURF_STYLE)
+
     def speak(self, text: str, language: Optional[str] = None,
-              voice: Optional[str] = None, callback: Optional[Callable] = None) -> None:
+              voice: Optional[str] = None, callback: Optional[Callable] = None,
+              emotion: Optional[str] = None) -> None:
         """
         Speak text. Interrupts any current speech first.
         Priority: cache (instant) → Polly Generative → Polly Neural → pyttsx3.
+        `emotion` picks the Murf voice style so the delivery matches the mood.
         """
         if not text:
             if callback:
                 callback()
             return
+
+        if emotion is not None:
+            self.set_emotion_hint(emotion)
 
         # Interrupt current speech if any
         self._interrupt()
@@ -319,10 +360,26 @@ class VoiceOutput:
         """Stop speaking immediately."""
         self._interrupt()
 
-    def speak_reaction(self, text: str, intensity: str = "normal") -> None:
-        """Speak reaction with Polly. Falls back to pyttsx3 if Polly unavailable."""
+    def speak_ack(self) -> bool:
+        """Play a tiny pre-cached acknowledgement ('haan'/'hmm') INSTANTLY while the
+        real reply is being generated — makes the response feel near-instant.
+        Only plays if the filler is already cached (never blocks on the network).
+        Returns True if a filler was started."""
+        import random
+        text = random.choice(ACK_FILLERS)
+        if _is_cached(text):
+            self.speak(text)
+            return True
+        return False
+
+    def speak_reaction(self, text: str, intensity: str = "normal",
+                       emotion: Optional[str] = None) -> None:
+        """Speak a reaction line. `emotion` sets the Murf voice style so window-move
+        reactions actually sound happy/surprised/sad instead of flat."""
         if not text:
             return
+        if emotion is not None:
+            self.set_emotion_hint(emotion)
         self._interrupt()
         thread = threading.Thread(
             target=self._speak_reaction_impl,
@@ -344,8 +401,9 @@ class VoiceOutput:
                 return
             if self._murf_available and self._speak_murf(text):
                 return
-            if self._polly_available and self._speak_polly(text):
-                return
+            # Polly disabled (robotic) — skip to pyttsx3
+            # if self._polly_available and self._speak_polly(text):
+            #     return
             # Last resort fallback
             self._speak_pyttsx3(text)
         except Exception:
@@ -681,12 +739,12 @@ class VoiceOutput:
             cached_path = _is_cached(text)
             if cached_path:
                 self._play_with_lip_sync(str(cached_path))
-            # STEP 2: Murf (PRIMARY — cute Alia voice)
+            # STEP 2: Murf Falcon 2.1 (PRIMARY — Pooja Conversational)
             elif self._murf_available and self._speak_murf(text):
                 pass
-            # STEP 3: Amazon Polly (FALLBACK)
-            elif self._polly_available and self._speak_polly(text):
-                pass
+            # STEP 3: Amazon Polly disabled — sounds robotic; skip to pyttsx3
+            # elif self._polly_available and self._speak_polly(text):
+            #     pass
             # STEP 4: Last resort — pyttsx3 offline
             else:
                 self._speak_pyttsx3(text)
@@ -706,12 +764,203 @@ class VoiceOutput:
             if callback:
                 callback()
 
+    def _murf_prepare(self, clean: str):
+        """Detect language/script for Murf and decide the locale + whether each chunk
+        must be transliterated to Devanagari. Returns (locale, convert_to_devanagari).
+
+        Done ONCE on the whole reply (more reliable than per-chunk) so every streamed
+        chunk uses the same voice/locale and the delivery stays consistent."""
+        import re
+        has_devanagari = len(re.findall(r'[ऀ-ॿ]', clean)) >= 2
+        # Only UNAMBIGUOUS Marathi words — words that are also common in Hindi
+        # ("nahi", "kay", "pan", "karu", "bagh", "chalte", "dya", "ghe") are
+        # removed, because a single shared word like "nahi" was wrongly flagging
+        # ordinary Hindi replies as Marathi → wrong mr-IN voice (the "alag awaaz" bug).
+        marathi_markers = {
+            "aahe", "aahes", "kasa", "kashi", "mala", "tula", "tyala",
+            "tichya", "aani", "mhanje", "sangto", "sangte",
+            "zala", "zali", "honar", "hotay", "aahet",
+            "tumhi", "amhi", "kela", "keli",
+        }
+        hinglish_markers = {
+            "haan", "nahi", "nahin", "kya", "kaise", "kaisi", "kaisa", "hai", "hain", "hoon", "hun",
+            "tha", "thi", "the", "kar", "karo", "karna", "raha", "rahi", "rahe",
+            "theek", "thik", "bol", "bolo", "bata", "batao", "chal", "chalo", "shweta", "mujhe",
+            "tujhe", "tera", "teri", "tere", "mera", "meri", "mere", "aap", "aapka", "aapki",
+            "kaun", "kahan", "kyun", "kyu", "accha", "achha", "mast", "badhiya", "ruk", "suno",
+            "sun", "dekh", "dekho", "samajh", "aaya", "aayi", "gaya", "gayi", "ho", "hum", "ab",
+            "karenge", "baje", "gana", "gaana", "sunao", "chalao",
+            "abhi", "dopahar", "subah", "shaam", "raat", "kal", "aaj", "parso",
+            "bajke", "bajkar", "minute", "ghante", "baj", "ke", "ka", "ki", "ko", "se", "me",
+            "mein", "pe", "tak", "liye", "wala", "wali", "wale", "diya", "liya", "kiya",
+            "karti", "karta", "karungi", "karunga", "rahi", "raha", "hogi", "hoga",
+            "khol", "kholo", "khola", "band", "chalu", "check", "dekhti", "dekhta",
+            "leti", "leta", "deti", "deta", "soch", "socho", "pata", "lagao",
+        }
+        words = set(re.findall(r'[a-zA-Z]+', clean.lower()))
+        # Require 2+ distinct Marathi markers — one shared word must never win.
+        is_marathi = len(words & marathi_markers) >= 2
+        is_hindi = has_devanagari or bool(words & hinglish_markers)
+
+        if has_devanagari:
+            return ("mr-IN" if is_marathi else "hi-IN"), False
+        elif is_marathi:
+            return "mr-IN", False
+        elif is_hindi:
+            return "hi-IN", True   # romanized Hindi → transliterate each chunk
+        else:
+            return "en-IN", False
+
+    def _split_tts_chunks(self, text: str, max_len: int = 220, min_len: int = 25):
+        """Split a reply into sentence-sized chunks for streaming synthesis.
+
+        Each sentence becomes its own chunk so the FIRST chunk synthesizes and
+        starts playing fast. A sentence is only merged into the previous chunk
+        when that chunk is still a tiny fragment (< min_len) — this avoids
+        wasteful one-word API calls without swallowing the whole reply into a
+        single chunk (which would defeat streaming). max_len caps that merge."""
+        import re
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?।])\s+', text.strip()) if s.strip()]
+        if not sentences:
+            s = text.strip()
+            return [s] if s else []
+        chunks = []
+        buf = ""
+        for s in sentences:
+            if not buf:
+                buf = s
+            elif len(buf) < min_len and len(buf) + len(s) + 1 <= max_len:
+                buf += " " + s
+            else:
+                chunks.append(buf)
+                buf = s
+        if buf:
+            chunks.append(buf)
+        return chunks
+
+    def _murf_request_bytes(self, payload_text: str, locale: str, style: Optional[str] = None):
+        """Synthesize a single chunk with Murf Falcon 2.1 and return raw MP3 bytes
+        (no playback). Tries the low-latency streaming endpoints, then the SDK.
+        `style` picks the emotional voice style. Returns None on failure/interrupt."""
+        if self._interrupt_event.is_set():
+            return None
+        import requests
+        style = style or MURF_STYLE
+        headers = {"api-key": MURF_API_KEY, "Content-Type": "application/json"}
+        payload = {
+            "voiceId": MURF_VOICE_ID,
+            "style": style,
+            "model": MURF_MODEL,
+            "locale": locale,
+            "text": payload_text,
+            "format": MURF_FORMAT,
+        }
+        for endpoint in MURF_FALCON_ENDPOINTS:
+            if self._interrupt_event.is_set():
+                return None
+            try:
+                resp = requests.post(endpoint, headers=headers, json=payload, timeout=8)
+                if resp.status_code == 200 and len(resp.content) > CACHE_MIN_FILE_SIZE:
+                    return resp.content
+                else:
+                    logger.warning(f"[TTS] Murf Falcon endpoint {endpoint} status {resp.status_code}: {resp.text[:120]}")
+            except Exception as ep_err:
+                logger.debug(f"[TTS] Murf Falcon endpoint {endpoint} failed: {ep_err}")
+
+        # Secondary fallback: Murf SDK generate()
+        if self._murf_client and not self._interrupt_event.is_set():
+            try:
+                res = self._murf_client.text_to_speech.generate(
+                    text=payload_text,
+                    voice_id=MURF_VOICE_ID,
+                    style=style,
+                    locale=locale,
+                    model_version="GEN2",
+                    format=MURF_FORMAT,
+                    sample_rate=MURF_SAMPLE_RATE,
+                    pitch=MURF_PITCH,
+                )
+                audio_url = getattr(res, "audio_file", None) or getattr(res, "audioFile", None)
+                if audio_url:
+                    import urllib.request
+                    tmp = tempfile.mktemp(suffix=".mp3")
+                    try:
+                        urllib.request.urlretrieve(audio_url, tmp)
+                        if os.path.exists(tmp) and os.path.getsize(tmp) > CACHE_MIN_FILE_SIZE:
+                            with open(tmp, "rb") as f:
+                                return f.read()
+                    finally:
+                        self._safe_delete_temp(tmp)
+            except Exception as sdk_err:
+                logger.debug(f"[TTS] Murf SDK fallback failed: {sdk_err}")
+        return None
+
+    def _speak_murf_streaming(self, text: str, chunks, locale: str, convert_dev: bool, style: Optional[str] = None) -> bool:
+        """STREAMING TTS (Phase 1.5): synthesize sentence chunks in a background
+        producer thread while the current thread plays each chunk the moment it's
+        ready. The first words are heard in ~0.5-1s instead of after the WHOLE
+        reply finishes synthesizing - big perceived-latency win on long replies.
+
+        Interruptible: a new speak() sets _interrupt_event, which stops the current
+        chunk's playback and the producer, and the consumer drains + cleans up temps.
+        """
+        import queue
+        from assistant.hinglish_to_devanagari import to_devanagari
+
+        audio_q = queue.Queue()
+        SENTINEL = object()
+
+        def _producer():
+            try:
+                for ch in chunks:
+                    if self._interrupt_event.is_set():
+                        break
+                    payload_text = to_devanagari(ch) if convert_dev else ch
+                    audio = self._murf_request_bytes(payload_text, locale, style)
+                    if self._interrupt_event.is_set():
+                        break
+                    if audio:
+                        tmp = tempfile.mktemp(suffix=".mp3")
+                        try:
+                            with open(tmp, "wb") as f:
+                                f.write(audio)
+                            audio_q.put(tmp)
+                        except Exception as w_err:
+                            logger.debug(f"[TTS] stream chunk write failed: {w_err}")
+                            self._safe_delete_temp(tmp)
+            finally:
+                audio_q.put(SENTINEL)
+
+        logger.info(f"[TTS] Murf streaming request → voice={MURF_VOICE_ID} locale={locale} ({len(chunks)} chunks)")
+        producer = threading.Thread(target=_producer, daemon=True, name="TTS-StreamProducer")
+        producer.start()
+
+        spoke = False
+        while True:
+            item = audio_q.get()
+            if item is SENTINEL:
+                break
+            # If interrupted, keep draining the queue to delete temp files, don't play.
+            if self._interrupt_event.is_set():
+                self._safe_delete_temp(item)
+                continue
+            try:
+                self._play_with_lip_sync(item)
+                spoke = True
+            finally:
+                self._safe_delete_temp(item)
+
+        if spoke:
+            logger.info(f"[TTS] Murf streaming spoke ({len(chunks)} chunks): '{text[:50]}'")
+        return spoke
+
     def _speak_murf(self, text: str) -> bool:
         """
         Generate audio with Murf Falcon 2.1 (Pooja, Conversational).
         - If text is Hindi/Hinglish: sends Devanagari Hindi with locale="hi-IN" for proper authentic pronunciation.
         - If text is pure English: sends clean English with locale="en-IN" (natural Indian English accent).
-        Uses ultra-low latency streaming (<100ms) with regional failover.
+        Multi-sentence replies are STREAMED chunk-by-chunk (Phase 1.5) so the first
+        words play within ~0.5-1s; single-sentence replies take the direct path.
         Caches short phrases to save credits. Returns True on success.
         """
         if not MURF_API_KEY or self._interrupt_event.is_set():
@@ -725,81 +974,48 @@ class VoiceOutput:
         if not clean.strip():
             return False
 
-        # Detect whether text is Hindi / Hinglish or pure English
+        # STREAMING path (Phase 1.5): multi-sentence replies synthesize + play
+        # chunk-by-chunk so the first words are heard in ~0.5-1s. Single-sentence
+        # replies fall through to the direct single-shot path below.
+        _locale, _convert_dev = self._murf_prepare(clean)
+        _chunks = self._split_tts_chunks(clean)
+        _style = self._style_for_emotion()  # emotional voice from the current emotion
+        if len(_chunks) >= 2:
+            return self._speak_murf_streaming(text, _chunks, _locale, _convert_dev, _style)
+
+        # Auto language detection: Hindi/Marathi (Devanagari) vs Hinglish vs English
         has_devanagari = len(re.findall(r'[\u0900-\u097F]', clean)) >= 2
+        marathi_markers = {
+            "aahe", "aahes", "kaay", "kasa", "kashi", "mala", "tula", "tyala",
+            "tichya", "aani", "pan", "mhanje", "bagh", "sangto", "sangte",
+            "chalte", "zala", "zali", "nahi", "honar", "hotay", "aahet",
+            "tumhi", "amhi", "kay", "karu", "kela", "keli", "dya", "ghe",
+        }
         hinglish_markers = {
             "haan", "nahi", "nahin", "kya", "kaise", "kaisi", "kaisa", "hai", "hain", "hoon", "hun",
-            "tha", "thi", "the", "kar", "karo", "karna", "raha", "rahi", "rahe", "bhai", "yaar",
+            "tha", "thi", "the", "kar", "karo", "karna", "raha", "rahi", "rahe",
             "theek", "thik", "bol", "bolo", "bata", "batao", "chal", "chalo", "shweta", "mujhe",
             "tujhe", "tera", "teri", "tere", "mera", "meri", "mere", "aap", "aapka", "aapki",
             "kaun", "kahan", "kyun", "kyu", "accha", "achha", "mast", "badhiya", "ruk", "suno",
             "sun", "dekh", "dekho", "samajh", "aaya", "aayi", "gaya", "gayi", "ho", "hum", "ab",
-            "karenge", "baje", "gana", "gaana", "sunao", "chalao"
+            "karenge", "baje", "gana", "gaana", "sunao", "chalao",
+            "abhi", "dopahar", "subah", "shaam", "raat", "kal", "aaj", "parso",
+            "bajke", "bajkar", "minute", "ghante", "baj", "ke", "ka", "ki", "ko", "se", "me",
+            "mein", "pe", "tak", "liye", "wala", "wali", "wale", "diya", "liya", "kiya",
+            "karti", "karta", "karungi", "karunga", "rahi", "raha", "hogi", "hoga",
+            "khol", "kholo", "khola", "band", "chalu", "check", "dekhti", "dekhta",
+            "leti", "leta", "deti", "deta", "soch", "socho", "pata", "lagao",
         }
-        words = set(re.findall(r'[a-zA-Z]+', clean.lower()))
-        is_hindi = has_devanagari or bool(words & hinglish_markers)
+        # Reuse the single language decision from _murf_prepare (computed above) —
+        # no duplicate detection. _convert_dev => transliterate romanized Hindi.
+        payload_text = to_devanagari(clean) if _convert_dev else clean
+        payload_locale = _locale
 
-        if has_devanagari:
-            payload_text = clean
-            payload_locale = "hi-IN"
-        elif is_hindi:
-            payload_text = to_devanagari(clean)
-            payload_locale = "hi-IN"
-        else:
-            payload_text = clean
-            payload_locale = "en-IN"
-
-        logger.info(f"[TTS] Murf Falcon 2.1 request → voice={MURF_VOICE_ID} locale={payload_locale} | {payload_text[:45]!r}")
+        logger.info(f"[TTS] Murf Falcon 2.1 request → voice={MURF_VOICE_ID} locale={payload_locale} style={_style} | {payload_text[:45]!r}")
 
         tmp_path = tempfile.mktemp(suffix=".mp3")
         try:
-            headers = {
-                "api-key": MURF_API_KEY,
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "voiceId": MURF_VOICE_ID,
-                "style": MURF_STYLE,
-                "model": MURF_MODEL,
-                "locale": payload_locale,
-                "text": payload_text,
-                "format": MURF_FORMAT,
-            }
-
-            audio_bytes = None
-            for endpoint in MURF_FALCON_ENDPOINTS:
-                try:
-                    resp = requests.post(endpoint, headers=headers, json=payload, timeout=8)
-                    if resp.status_code == 200 and len(resp.content) > CACHE_MIN_FILE_SIZE:
-                        audio_bytes = resp.content
-                        break
-                    else:
-                        logger.warning(f"[TTS] Murf Falcon endpoint {endpoint} status {resp.status_code}: {resp.text[:120]}")
-                except Exception as ep_err:
-                    logger.debug(f"[TTS] Murf Falcon endpoint {endpoint} failed: {ep_err}")
-
-            # Secondary fallback: Murf SDK generate()
-            if not audio_bytes and self._murf_client:
-                try:
-                    res = self._murf_client.text_to_speech.generate(
-                        text=payload_text,
-                        voice_id=MURF_VOICE_ID,
-                        style=MURF_STYLE,
-                        locale=payload_locale,
-                        model_version="GEN2",
-                        format=MURF_FORMAT,
-                        sample_rate=MURF_SAMPLE_RATE,
-                        pitch=MURF_PITCH,
-                    )
-                    audio_url = getattr(res, "audio_file", None) or getattr(res, "audioFile", None)
-                    if audio_url:
-                        import urllib.request
-                        urllib.request.urlretrieve(audio_url, tmp_path)
-                        if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > CACHE_MIN_FILE_SIZE:
-                            with open(tmp_path, "rb") as f:
-                                audio_bytes = f.read()
-                except Exception as sdk_err:
-                    logger.debug(f"[TTS] Murf SDK fallback failed: {sdk_err}")
+            audio_bytes = self._murf_request_bytes(payload_text, payload_locale, _style)
 
             if audio_bytes:
                 with open(tmp_path, "wb") as f:
@@ -1035,6 +1251,13 @@ class VoiceOutput:
         # Reading lip_sr from the file and matching it = zero speed/pitch artifacts.
         # Re-init each time also picks up output device changes (headphone plug/unplug).
         file_sr = int(lip_sr) if lip_sr else PYGAME_MIXER_FREQ
+
+        # If pygame isn't installed, go straight to the sounddevice path (no
+        # per-call import attempt / warning — checked once at startup).
+        if not self._pygame_available:
+            self._play_sounddevice_fallback(mp3_path, lip_data, lip_sr)
+            return
+
         try:
             import pygame
             cur = pygame.mixer.get_init()
@@ -1057,10 +1280,6 @@ class VoiceOutput:
                     return
                 time.sleep(0.05)
 
-        except ImportError:
-            # pygame not available — fall back to sounddevice
-            logger.warning("[TTS] pygame not available, using sounddevice fallback")
-            self._play_sounddevice_fallback(mp3_path, lip_data, lip_sr)
         except Exception as e:
             logger.warning(f"[TTS] pygame playback failed: {e}, trying sounddevice")
             self._play_sounddevice_fallback(mp3_path, lip_data, lip_sr)

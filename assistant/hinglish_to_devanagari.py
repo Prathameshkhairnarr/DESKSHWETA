@@ -113,6 +113,17 @@ WORD_MAP = {
     "sahi": "सही", "galat": "गलत", "sach": "सच", "jhooth": "झूठ",
     "jaldi": "जल्दी", "dheere": "धीरे", "dheerey": "धीरे", "aaram": "आराम",
     "arre": "अरे", "arey": "अरे", "oye": "ओये", "wah": "वाह", "uff": "उफ़",
+    # Agent / common task words
+    "gadbad": "गड़बड़", "dikkat": "दिक्कत", "mushkil": "मुश्किल",
+    "koshish": "कोशिश", "samajh": "समझ", "pata": "पता", "maloom": "मालूम",
+    "zaroor": "ज़रूर", "bilkul": "बिल्कुल", "seedha": "सीधा", "seedhi": "सीधी",
+    "phir": "फिर", "dobara": "दोबारा", "warna": "वरना", "lekin": "लेकिन",
+    "isliye": "इसलिए", "kyunki": "क्योंकि", "taaki": "ताकि",
+    "shayad": "शायद", "lagta": "लगता", "lagti": "लगती", "lagbhag": "लगभग",
+    "zyada": "ज़्यादा", "kum": "कम", "thoda": "थोड़ा", "bahut": "बहुत",
+    "shukriya": "शुक्रिया", "hua": "हुआ", "hui": "हुई",
+    "likhna": "लिखना", "likha": "लिखा", "likhi": "लिखी",
+    "kholo": "खोलो", "kholna": "खोलना", "khola": "खोला",
 
     # ── Time & Temporal ──
     "aaj": "आज", "kal": "कल", "parso": "परसों", "tarso": "तरसों",
@@ -343,6 +354,11 @@ ENGLISH_WORDS = {
     "note", "notes", "memo", "list", "todo", "item", "items",
     "yes", "no", "true", "false", "bot", "assistant", "voice", "speech",
     "tradingview", "nvda", "laptop", "computer", "spec", "specs",
+    # Agent system / task words (must NOT be transliterated)
+    "complete", "completed", "failed", "success", "done", "task", "step",
+    "agent", "loop", "tool", "action", "result", "output", "input",
+    "research", "data", "fetch", "search", "query", "response",
+    "register", "execute", "running", "pending", "cancelled",
 
     # Conversational Indian English Words & Colloquialisms
     "actually", "basically", "seriously", "literally", "normally",
@@ -360,6 +376,11 @@ ENGLISH_WORDS = {
     "hour", "hours", "morning", "evening", "afternoon", "night",
     "hello", "hi", "hey", "bye", "goodbye", "later", "online",
     "offline", "connect", "connected", "disconnect", "available",
+    # Directional / positional words — must stay English for Murf pronunciation
+    "left", "right", "up", "down", "top", "bottom", "front", "back",
+    "above", "below", "inside", "outside", "center", "middle", "edge",
+    # Spatial prepositions used in English
+    "near", "far", "next", "between", "around", "across", "along",
     "feeling", "mood", "vibe", "scene", "view", "side", "corner",
     "floor", "ground", "penthouse", "basement", "helicopter",
     "simulator", "earthquake", "dignity", "height", "fancy", "boring",
@@ -484,9 +505,14 @@ def _translit_word(w: str) -> str:
 def to_devanagari(text: str) -> str:
     """
     Convert Romanized Hinglish text for Murf hi-IN TTS.
-    - Casual Hinglish words -> Accurate Devanagari via WORD_MAP or smart syllable transliteration.
-    - English, system, and tech terms -> Preserved in Roman/Latin script for native Murf bilingual synthesis.
-    - Numbers, punctuation, and emojis handled gracefully.
+
+    Strategy (conservative — Murf Pooja reads Romanized Hinglish naturally):
+    - WORD_MAP entries -> Devanagari (only words we have explicitly mapped)
+    - Capitalized words (proper nouns: Sonia, Gandhi, Delhi) -> keep Latin as-is
+    - ENGLISH_WORDS whitelist -> keep Latin as-is
+    - Everything else (unknown Hindi, mixed, news content) -> keep Latin as-is
+      Murf hi-IN Conversational handles Romanized Hindi perfectly fine.
+      Phonetic transliteration of unknowns causes Arabic-sounding output — avoid.
     """
     if not text:
         return text
@@ -499,10 +525,17 @@ def to_devanagari(text: str) -> str:
             out.append(tok)
             continue
         low = tok.lower()
+        # 1. Explicit WORD_MAP — trusted Devanagari mappings
         if low in WORD_MAP:
             out.append(WORD_MAP[low])
+        # 2. Proper noun (starts uppercase) — names, places, brands → always Latin
+        elif tok[0].isupper():
+            out.append(tok)
+        # 3. Known English/tech/system word → Latin
         elif _is_english_word(low):
-            out.append(tok)  # keep brand/tech/English words in Roman
+            out.append(tok)
+        # 4. Unknown word → keep Latin (let Murf handle it natively)
+        #    DO NOT phonetically transliterate — causes garbled Arabic-sounding output
         else:
-            out.append(_translit_word(tok))
+            out.append(tok)
     return "".join(out)

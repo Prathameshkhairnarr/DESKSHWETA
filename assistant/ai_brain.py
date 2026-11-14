@@ -1,7 +1,7 @@
-"""
+﻿"""
 AI Brain Module for Shweta AI Desktop Assistant.
 Multi-provider support with ProviderHealthCache for smart failover.
-Groq (primary) → Gemini (fallback 1) → GitHub Models (fallback 2).
+Groq (primary) â†’ Gemini (fallback 1) â†’ GitHub Models (fallback 2).
 
 OPTIMIZED v2.0:
 - Retry logic with exponential backoff (failure path only, no delays on success)
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# KNOWN ACTIONS — for validation
+# KNOWN ACTIONS â€” for validation
 # ============================================================
 KNOWN_ACTIONS = {
     "none", "open_youtube", "open_google", "open_website", "play_youtube",
@@ -72,9 +72,7 @@ KNOWN_ACTIONS = {
     "send_email", "get_crypto_price", "get_stock_market", "get_news",
     "get_gold_price",
     "morning_briefing",
-    "open_tradingview", "draw_trend_line", "draw_horizontal_line",
-    "draw_rectangle", "draw_fibonacci", "mark_support_resistance",
-    "undo_drawing", "clear_drawings", "change_symbol", "change_timeframe",
+    "order_food", "book_flight",
     "auto_search_and_play", "auto_youtube_search", "auto_play_first",
     "auto_google_search", "auto_open_url", "auto_click", "auto_type",
     "auto_scroll_down", "auto_scroll_up", "auto_go_back", "auto_close_browser",
@@ -83,7 +81,7 @@ KNOWN_ACTIONS = {
 
 
 # ============================================================
-# ProviderHealthCache — Smart provider failover + usage tracking
+# ProviderHealthCache â€” Smart provider failover + usage tracking
 # ============================================================
 
 class ProviderHealthCache:
@@ -91,9 +89,9 @@ class ProviderHealthCache:
     Tracks provider health, usage counters, and rate limit awareness.
 
     Cooldown rules:
-    - 429 Rate Limit → skip for 5 minutes
-    - Connection/timeout error → skip for 30 seconds
-    - Other errors → skip for 10 seconds
+    - 429 Rate Limit â†’ skip for 5 minutes
+    - Connection/timeout error â†’ skip for 30 seconds
+    - Other errors â†’ skip for 10 seconds
 
     Rate limit awareness (free tiers):
     - Groq: 14400 req/day = 600/hour
@@ -167,7 +165,7 @@ class ProviderHealthCache:
                 "failed_at": time.time(),
                 "cooldown": cooldown,
             }
-        logger.warning(f"[Health] {provider_name} marked {error_type} → cooldown {cooldown}s")
+        logger.warning(f"[Health] {provider_name} marked {error_type} â†’ cooldown {cooldown}s")
 
     def mark_success(self, provider_name: str) -> None:
         """Reset failure state on success."""
@@ -243,7 +241,7 @@ _provider_cache = ProviderHealthCache()
 
 
 # ============================================================
-# Robust JSON Parser — handles all malformed AI responses
+# Robust JSON Parser â€” handles all malformed AI responses
 # ============================================================
 
 def parse_ai_response(text: str) -> Dict[str, Any]:
@@ -361,7 +359,7 @@ def parse_ai_response(text: str) -> Dict[str, Any]:
         except (json.JSONDecodeError, ValueError):
             pass
         action = clean_action
-        logger.debug(f"Fixed embedded action: → '{action}' params: {params}")
+        logger.debug(f"Fixed embedded action: â†’ '{action}' params: {params}")
 
     # Handle GitHub Models format: params at top level
     if not params:
@@ -374,10 +372,10 @@ def parse_ai_response(text: str) -> Dict[str, Any]:
         # Try fuzzy match (common AI mistakes)
         close_match = _fuzzy_action_match(action)
         if close_match:
-            logger.info(f"[Parse] Fuzzy action fix: '{action}' → '{close_match}'")
+            logger.info(f"[Parse] Fuzzy action fix: '{action}' â†’ '{close_match}'")
             action = close_match
         else:
-            logger.warning(f"[Parse] Unknown action '{action}' → defaulting to 'none'")
+            logger.warning(f"[Parse] Unknown action '{action}' â†’ defaulting to 'none'")
             # Keep the reply, just don't execute unknown action
             action = "none"
 
@@ -497,7 +495,7 @@ def _last_resort_response() -> Dict[str, Any]:
 
 
 # ============================================================
-# AIBrain — Main class
+# AIBrain â€” Main class
 # ============================================================
 
 class AIBrain:
@@ -522,7 +520,7 @@ class AIBrain:
             logger.error("[AI] No providers available!")
 
     def _init_groq(self) -> None:
-        """Initialize Groq client (primary — fast, 14400 req/day)."""
+        """Initialize Groq client (primary â€” fast, 14400 req/day)."""
         if not GROQ_API_KEY:
             return
         try:
@@ -600,7 +598,7 @@ class AIBrain:
             # Skip unavailable (unless all down)
             if not all_unavailable and not _provider_cache.is_available(provider):
                 remaining = _provider_cache.get_remaining_cooldown(provider)
-                logger.info(f"[AI] Skipping {provider} — cooldown {remaining}s remaining")
+                logger.info(f"[AI] Skipping {provider} â€” cooldown {remaining}s remaining")
                 continue
 
             # Try provider with retry logic
@@ -632,10 +630,10 @@ class AIBrain:
     def _call_with_retry(self, provider: str, lang_instruction: str) -> Optional[str]:
         """
         Call provider with retry logic. Exponential backoff on FAILURE only.
-        - 429 → skip immediately (no retry, mark in health cache)
-        - Timeout → retry once after 1s, then skip
-        - Bad response → retry once, then skip
-        - Success → return immediately (no delays)
+        - 429 â†’ skip immediately (no retry, mark in health cache)
+        - Timeout â†’ retry once after 1s, then skip
+        - Bad response â†’ retry once, then skip
+        - Success â†’ return immediately (no delays)
         """
         max_attempts = 2  # 1 initial + 1 retry (only on timeout/transient)
         backoff = 1.0  # seconds between retries
@@ -665,7 +663,7 @@ class AIBrain:
                     logger.info(f"[AI] {provider} rate limited, not retrying.")
                     return None
 
-                # Transient error — retry with backoff (only if not last attempt)
+                # Transient error â€” retry with backoff (only if not last attempt)
                 if attempt < max_attempts - 1:
                     logger.info(f"[AI] {provider} failed (attempt {attempt+1}), retrying in {backoff}s...")
                     time.sleep(backoff)
@@ -748,7 +746,7 @@ class AIBrain:
                 })
 
             response = self._gemini_client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-2.5-flash-lite",
                 contents=gemini_history,
                 config=types.GenerateContentConfig(
                     system_instruction=dynamic_prompt,
@@ -928,3 +926,4 @@ class AIBrain:
                 f.write(log_entry)
         except Exception as e:
             logger.error(f"[AI] Log failed: {e}")
+
