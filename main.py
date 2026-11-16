@@ -157,7 +157,7 @@ class ShwetaAssistant:
 
         # Greet user on startup — deliver briefing if first time today, else simple greet
         # Wait for avatar to fully load (VRM takes ~3 sec)
-        QTimer_singleshot_greet = threading.Timer(5.0, self._startup_greet_or_briefing)
+        QTimer_singleshot_greet = threading.Timer(2.5, self._startup_greet_or_briefing)
         QTimer_singleshot_greet.daemon = True
         QTimer_singleshot_greet.start()
 
@@ -181,13 +181,15 @@ class ShwetaAssistant:
             self.ui.schedule(self.ui.set_emotion, "happy", 0.8)
             self.briefing_manager.deliver()
         else:
-            # Simple greeting
+            # Simple greeting — happy face + cheerful voice to match the hand wave.
             self._is_processing = True  # Prevent interruption during greeting
-            greeting = f"नमस्ते! मैं {ASSISTANT_NAME} हूँ।"
+            greeting = f"नमस्ते! मैं {ASSISTANT_NAME} हूँ, आपकी मदद के लिए तैयार।"
             self.ui.schedule(self.ui.set_text, greeting)
+            self.ui.schedule(self.ui.set_emotion, "happy", 0.9)
             self.ui.schedule(self.ui.set_state, AvatarWindow.STATE_SPEAKING)
             self.voice_output.speak(
                 greeting,
+                emotion="happy",
                 callback=self._on_speaking_done
             )
 
@@ -592,7 +594,7 @@ class ShwetaAssistant:
             if action == "clear_history":
                 self.ai_brain.clear_history()
             else:
-                long_actions = ["identify_music", "react_to_screen", "browser_agent_task", "search_file", "play_youtube"]
+                long_actions = ["identify_music", "react_to_screen", "read_screen", "browser_agent_task", "search_file", "play_youtube"]
                 if action in long_actions and reply:
                     self.ui.schedule(self.ui.set_text, f"?? {reply}")
                     self.ui.schedule(self.ui.show_chat_bubble, reply, 6.0)
@@ -622,7 +624,7 @@ class ShwetaAssistant:
                         "get_battery", "get_ram_usage", "get_storage", "get_weather",
                         "get_cpu_usage", "get_wifi_status", "get_system_info", "get_time",
                         "get_date", "list_files", "search_file", "list_notes", "daily_briefing",
-                        "morning_briefing", "browser_agent_task", "react_to_screen", "identify_music"]
+                        "morning_briefing", "browser_agent_task", "react_to_screen", "read_screen", "identify_music"]
         if action in info_actions and action_message:
             clean_msg = action_message.replace("📈", "").replace("📉", "").replace("🥇", "").replace("🥈", "").replace("🔋", "").replace("💾", "").replace("🖥️", "").replace("💿", "").replace("📝", "").replace("🕐", "").replace("🌤", "").strip()
             import re
@@ -636,7 +638,7 @@ class ShwetaAssistant:
         # Speak the reply (once only)
         logger.info(f"[Speaking] final_reply='{reply[:150]}'" if reply else "[Speaking] (no reply)")
         if reply:
-            if action == "react_to_screen":
+            if action in ("react_to_screen", "read_screen"):
                 import random
                 # Add a physical reaction for screen content
                 anims = ["look_around", "head_tilt_left", "head_tilt_right", "nod"]
@@ -1098,30 +1100,9 @@ class ShwetaAssistant:
     def run(self) -> None:
         """Start the assistant (blocks on PyQt5 main loop)."""
         logger.info(f"{ASSISTANT_NAME} is ready!")
-
-        # Launch greeting: the avatar auto-plays a peek + hand wave on load (viewer.html);
-        # here we add a warm spoken hello shortly after, in a happy voice, so the wave
-        # and the greeting land together.
-        try:
-            from PyQt5.QtCore import QTimer
-
-            def _launch_greeting():
-                try:
-                    self.ui.set_emotion("happy", 0.9)
-                except Exception:
-                    pass
-                try:
-                    self.voice_output.speak(
-                        "नमस्ते! मैं श्वेता हूँ, आपकी मदद के लिए तैयार।",
-                        emotion="happy",
-                    )
-                except Exception:
-                    pass
-
-            QTimer.singleShot(1800, _launch_greeting)
-        except Exception:
-            pass
-
+        # NOTE: the launch greeting (spoken hello) is handled by
+        # _startup_greet_or_briefing — the avatar's peek + hand wave auto-plays in
+        # viewer.html. (A second spoken greeting here caused the "namaste" twice.)
         self.ui.run()
 
         # Cleanup on exit

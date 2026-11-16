@@ -257,6 +257,7 @@
         let hairJoints = []; // hair spring-bone joints + per-strand phase for the breeze effect
         let greetingActive = false;   // launch peek + hand-wave greeting
         let greetingStart = 0;
+        let camLookY = 1.36;          // animated camera look-at height (for greeting pull-back)
 
         // === EMOTION SYSTEM ===
         let currentEmotion = 'neutral';  // neutral, happy, angry, sad, surprised, relaxed, think, curious, wink, joy, fun, pout, bored, sleepy
@@ -439,6 +440,10 @@
                     const spine = vrm.humanoid.getRawBoneNode('spine') || vrm.humanoid.getBoneNode('spine');
                     if (spine) {
                         spine.rotation.x = breathVal;
+                        // Gentle slow upper-body weight-shift sway so she's never frozen.
+                        if (currentState === 'idle' && !musicVibing && !greetingActive) {
+                            spine.rotation.z = Math.sin(breathPhase * 0.45) * 0.012;
+                        }
                         // Chest expand on inhale
                         spine.scale.x = 1 + Math.sin(breathPhase) * 0.006;
                         spine.scale.z = 1 + Math.sin(breathPhase) * 0.004;
@@ -780,23 +785,29 @@
                     //  instead; playful reads from the bounce. Clean beats a broken arm.)
                     const armLerp = 2.5;
                     if (greetingActive) {
-                        // === LAUNCH GREETING: peek + hand wave ===
+                        // === LAUNCH GREETING: smooth hand wave ===
                         const gt = clock.elapsedTime - greetingStart;
-                        // WAVE: raise the right arm up/out (z only — safe swing axis, no
-                        // rotation.x which twisted the arm before) and oscillate it.
-                        const ramp = THREE.MathUtils.clamp(gt / 0.5, 0, 1);
-                        const waveZ = 0.3 - Math.sin(gt * 9.0) * 0.22 * ramp;  // raised + waving
+                        // Envelope: ease the arm UP (0->0.6s), hold+wave, then ease
+                        // it back DOWN (2.3->3.0s). smoothstep = no snap at either end.
+                        const g = THREE.MathUtils.smoothstep(gt, 0.0, 0.6) *
+                                  (1 - THREE.MathUtils.smoothstep(gt, 2.3, 3.0));
+                        const wave = Math.sin(gt * 5.0);          // slower, calmer wave
                         if (rArm) {
-                            rArm.rotation.z = THREE.MathUtils.lerp(rArm.rotation.z, waveZ, delta * 9);
-                            rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, delta * 9);
+                            // Raise the whole arm UP (hand near head height) and wave it —
+                            // a raised-arm wave avoids the elbow-up rig trouble that
+                            // twisted the arm before, and reads clearly as "hi".
+                            const baseZ = THREE.MathUtils.lerp(1.35, -0.95, g);
+                            rArm.rotation.z = baseZ - wave * 0.22 * g;
+                            rArm.rotation.x = THREE.MathUtils.lerp(rArm.rotation.x, 0, delta * 6);
                         }
                         if (rElbow) {
-                            rElbow.rotation.z = THREE.MathUtils.lerp(rElbow.rotation.z, -0.35, delta * 7);
-                            rElbow.rotation.x = THREE.MathUtils.lerp(rElbow.rotation.x, 0, delta * 7);
-                            rElbow.rotation.y = THREE.MathUtils.lerp(rElbow.rotation.y, 0, delta * 7);
+                            // Just a slight natural bend; the wave comes from the upper arm.
+                            rElbow.rotation.z = THREE.MathUtils.lerp(0, -0.25, g);
+                            rElbow.rotation.x = THREE.MathUtils.lerp(rElbow.rotation.x, 0, delta * 6);
+                            rElbow.rotation.y = THREE.MathUtils.lerp(rElbow.rotation.y, 0, delta * 6);
                         }
                         if (lArm) lArm.rotation.z = THREE.MathUtils.lerp(lArm.rotation.z, -1.35, delta * armLerp);
-                        if (gt > 3.0) greetingActive = false;  // done → back to rest
+                        if (gt > 3.1) greetingActive = false;  // done → back to rest
                     } else {
                         if (lArm) lArm.rotation.z = THREE.MathUtils.lerp(lArm.rotation.z, -1.35, delta * armLerp);
                         if (rArm) {
@@ -833,6 +844,20 @@
                     // Don't let animation errors kill the loop
                     console.warn('Animation error:', e.message);
                 }
+            }
+
+            // Launch greeting: smoothly pull the camera back so the hand wave is
+            // actually in frame (the normal portrait is too tight to show arms),
+            // then glide back to the portrait once the greeting ends.
+            if (typeof camera !== 'undefined' && camera) {
+                const camY = greetingActive ? 1.28 : 1.46;
+                const camZ = greetingActive ? 2.85 : 1.55;
+                const lookY = greetingActive ? 1.15 : 1.36;
+                camera.position.x = THREE.MathUtils.lerp(camera.position.x, 0, delta * 2.2);
+                camera.position.y = THREE.MathUtils.lerp(camera.position.y, camY, delta * 2.2);
+                camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZ, delta * 2.2);
+                camLookY = THREE.MathUtils.lerp(camLookY, lookY, delta * 2.2);
+                camera.lookAt(0, camLookY, 0);
             }
 
             renderer.render(scene, camera);

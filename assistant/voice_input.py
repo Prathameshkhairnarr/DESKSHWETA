@@ -112,6 +112,88 @@ def _load_vad() -> bool:
             return False
 
 
+# Bluetooth earbuds/headsets used as a MIC fall back to the low-quality 8 kHz
+# "Hands-Free" profile, which garbles speech (e.g. "screen pe kya" -> "arka chalaye").
+# Prefer a real built-in mic for INPUT; keep Bluetooth for OUTPUT only.
+_MIC_AVOID = (
+    "hands-free", "hands free", "handsfree", "headset", "bluetooth", " bt ", "a2dp",
+    "rockerz", "buds", "airpods", "wireless", "realme", "boat", "earbud", "earphone",
+)
+_MIC_PREFER = (
+    "realtek", "microphone array", "microphone (", "mic array", "built-in", "internal",
+)
+
+
+def _pick_input_device(sd_module):
+    """Pick the best MME input device, avoiding Bluetooth/headset hands-free mics
+    and preferring a built-in mic. Falls back to the first MME input, else None."""
+    best, best_score, first_mme = None, -1, None
+    try:
+        for i, d in enumerate(sd_module.query_devices()):
+            if d.get('max_input_channels', 0) <= 0:
+                continue
+            try:
+                host = sd_module.query_hostapis(d['hostapi'])['name']
+            except Exception:
+                host = ""
+            if 'MME' not in host:
+                continue
+            name = (d.get('name') or "").lower()
+            if first_mme is None:
+                first_mme = i
+            score = 0
+            if any(a in name for a in _MIC_AVOID):
+                score -= 10
+            if any(p in name for p in _MIC_PREFER):
+                score += 5
+            if 'sound mapper' in name:
+                score += 1  # neutral safe default
+            if score > best_score:
+                best_score, best = score, i
+    except Exception:
+        return None
+    return best if best is not None else first_mme
+
+
+def _reduce_noise(audio_float, sr):
+    """Light noise suppression so mostly the user's voice reaches the STT:
+    high-pass (drop rumble) + a noise gate that attenuates non-speech frames +
+    normalization (boosts quiet Bluetooth-mic audio). Pure numpy; scipy optional."""
+    try:
+        x = np.asarray(audio_float, dtype=np.float32)
+        if x.size < sr // 10:
+            return audio_float
+        # High-pass ~80 Hz to cut hum/rumble (optional — needs scipy)
+        try:
+            from scipy.signal import butter, sosfilt
+            sos = butter(4, 80, btype='highpass', fs=sr, output='sos')
+            x = sosfilt(sos, x).astype(np.float32)
+        except Exception:
+            pass
+        # Noise gate: estimate the noise floor from quiet frames, attenuate below it
+        frame = max(1, sr // 50)  # 20 ms
+        n = x.size // frame
+        if n > 6:
+            rms = np.sqrt(np.mean(x[:n * frame].reshape(n, frame) ** 2, axis=1) + 1e-9)
+            noise_floor = float(np.percentile(rms, 20))
+            thresh = noise_floor * 2.2
+            gate = rms > thresh
+            # Expand speech regions by 1 frame each side so word edges aren't clipped
+            g = gate.copy()
+            for i in range(n):
+                if gate[i]:
+                    if i > 0: g[i - 1] = True
+                    if i < n - 1: g[i + 1] = True
+            gains = np.where(g, 1.0, 0.12).astype(np.float32)
+            x[:n * frame] *= np.repeat(gains, frame)
+        # Normalize (boost quiet audio, cap the gain so we don't blow up noise)
+        peak = float(np.max(np.abs(x))) + 1e-9
+        x *= min(0.95 / peak, 6.0)
+        return x.astype(np.float32)
+    except Exception:
+        return audio_float
+
+
 class VoiceInput:
     """Smart voice input with VAD-based recording. Thread-safe."""
 
@@ -224,9 +306,11 @@ class VoiceInput:
             if on_processing:
                 on_processing()
 
-            # Convert float32 → int16 PCM bytes
+            # Convert float32 → int16 PCM bytes (with light noise suppression so
+            # mostly the user's voice — not background noise — reaches the STT)
             audio_float = np.concatenate(audio_chunks)
-            audio_int16 = (audio_float * 32767).astype(np.int16)
+            audio_float = _reduce_noise(audio_float, SAMPLE_RATE)
+            audio_int16 = (np.clip(audio_float, -1.0, 1.0) * 32767).astype(np.int16)
             pcm_bytes = audio_int16.tobytes()
 
             duration = len(audio_float) / SAMPLE_RATE
@@ -274,13 +358,9 @@ class VoiceInput:
         stream = None
         try:
             import sounddevice as sd
-            # Find a safe MME device (like Microsoft Sound Mapper) to avoid WDM-KS Blocking API crashes
-            safe_dev = None
-            for i, d in enumerate(sd.query_devices()):
-                if d['max_input_channels'] > 0 and 'MME' in sd.query_hostapis(d['hostapi'])['name']:
-                    safe_dev = i
-                    break
-                    
+            # Prefer a built-in MME mic over Bluetooth hands-free (which garbles speech).
+            safe_dev = _pick_input_device(sd)
+
             stream = sd.InputStream(
                 device=safe_dev,
                 samplerate=SAMPLE_RATE,
@@ -299,12 +379,8 @@ class VoiceInput:
                     _sd_refresh._terminate()
                     _sd_refresh._initialize()
                     
-                    safe_dev_retry = None
-                    for i, d in enumerate(_sd_refresh.query_devices()):
-                        if d['max_input_channels'] > 0 and 'MME' in _sd_refresh.query_hostapis(d['hostapi'])['name']:
-                            safe_dev_retry = i
-                            break
-                            
+                    safe_dev_retry = _pick_input_device(_sd_refresh)
+
                     stream = _sd_refresh.InputStream(
                         device=safe_dev_retry,
                         samplerate=SAMPLE_RATE,

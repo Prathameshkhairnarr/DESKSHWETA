@@ -87,37 +87,47 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
         return
 
     try:
-        config_path = os.path.join(os.path.dirname(__file__), "wakeword_config.json")
-        device_index = None
-        if os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                config = json.load(f)
-                
-                # Try to match by name, as indices change when devices are plugged/unplugged
-                target_name = config.get("device_name")
-                if target_name:
-                    devices = sd.query_devices()
-                    for idx, dev in enumerate(devices):
-                        if dev['max_input_channels'] > 0 and target_name in dev['name']:
-                            device_index = idx
-                            print(f"[WakeWord] Found audio device by name '{target_name}' at index: {device_index}")
-                            break
-                    
-        if device_index is None:
-            print(f"[WakeWord] Warning: Configured device '{target_name}' not found. Filtering for safe MME fallback...")
+        # Always pick a built-in MME mic and AVOID Bluetooth/headset hands-free
+        # devices (their 8 kHz profile garbles speech and the WDM-KS stream crashes
+        # with error -9999, which was killing/restarting this process in a loop).
+        _AVOID = ("hands-free", "hands free", "handsfree", "headset", "bluetooth", "a2dp",
+                  "rockerz", "buds", "airpods", "wireless", "realme", "boat", "earbud", "earphone")
+        _PREFER = ("realtek", "microphone array", "microphone (", "mic array", "built-in", "internal")
+
+        def _pick_mic():
+            best, best_score, first_mme = None, -1, None
             for i, d in enumerate(sd.query_devices()):
-                if d['max_input_channels'] > 0 and 'MME' in sd.query_hostapis(d['hostapi'])['name']:
-                    device_index = i
-                    print(f"[WakeWord] Selected safe fallback device index: {device_index} ({d['name']})")
-                    break
-        
-        # Resolve the current default explicitly. This avoids accidentally
-        # opening a virtual/output device when Windows changes the default.
+                if d.get('max_input_channels', 0) <= 0:
+                    continue
+                try:
+                    host = sd.query_hostapis(d['hostapi'])['name']
+                except Exception:
+                    host = ""
+                if 'MME' not in host:
+                    continue
+                name = (d.get('name') or "").lower()
+                if first_mme is None:
+                    first_mme = i
+                s = 0
+                if any(a in name for a in _AVOID):
+                    s -= 10
+                if any(p in name for p in _PREFER):
+                    s += 5
+                if 'sound mapper' in name:
+                    s += 1
+                if s > best_score:
+                    best_score, best = s, i
+            return best if best is not None else first_mme
+
+        device_index = _pick_mic()
         if device_index is None:
             default_input = sd.query_devices(kind="input")
             if default_input:
                 device_index = default_input["index"]
-                print(f"[WakeWord] Using default microphone: '{default_input['name']}' (index {device_index})", flush=True)
+        try:
+            print(f"[WakeWord] Using mic: '{sd.query_devices(device_index)['name']}' (index {device_index})", flush=True)
+        except Exception:
+            pass
 
         stream = sd.RawInputStream(samplerate=16000, blocksize=4000, device=device_index, dtype='int16', channels=1)
     except Exception as e:
@@ -159,8 +169,11 @@ def _wakeword_worker(queue: threading.Event, stop_event: threading.Event, trigge
                         except Exception:
                             pass
                         try:
-                            new_device = sd.query_devices(kind="input")
-                            new_device_index = new_device["index"] if new_device else None
+                            # Re-pick a built-in mic (never the Bluetooth hands-free one).
+                            new_device_index = _pick_mic()
+                            if new_device_index is None:
+                                _nd = sd.query_devices(kind="input")
+                                new_device_index = _nd["index"] if _nd else None
                             stream = sd.RawInputStream(
                                 samplerate=16000,
                                 blocksize=4000,

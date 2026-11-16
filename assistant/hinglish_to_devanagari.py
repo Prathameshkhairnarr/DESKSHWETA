@@ -277,29 +277,16 @@ WORD_MAP = {
     "pakad": "पकड़", "pakdo": "पकड़ो",
     "ud": "उड़", "udna": "उड़ना",
 
-    # Tech Terms, Acronyms & Apps (Explicit Devanagari phonetics so Murf hi-IN never says 'paa')
+    # Acronyms ONLY — these must be Devanagari so Murf hi-IN doesn't spell them
+    # letter-by-letter. FULL English words (youtube, vscode, project, music, screen,
+    # computer, bugs, update...) are intentionally NOT mapped here — they stay in
+    # Latin (via ENGLISH_WORDS / unknown fallback) so Murf reads them in a natural
+    # Indian-English accent instead of a garbled Devanagari transliteration.
     "pc": "पीसी", "ai": "एआई", "ok": "ओके", "okay": "ओके", "tv": "टीवी",
     "wifi": "वाई-फ़ाई", "ui": "यूआई", "os": "ओएस", "cpu": "सीपीयू",
     "gpu": "जीपीयू", "ram": "रैम", "rom": "रोम", "usb": "यूएसबी",
     "pdf": "पीडीएफ", "url": "यूआरएल", "app": "ऐप", "apps": "ऐप्स",
     "gb": "जीबी", "mb": "एमबी", "kb": "केबी", "tb": "टीबी",
-    "youtube": "यूट्यूब", "google": "गूगल", "chrome": "क्रोम",
-    "spotify": "स्पॉटिफ़ाई", "whatsapp": "व्हाट्सएप", "notepad": "नोटपैड",
-    "calculator": "कैलकुलेटर", "terminal": "टर्मिनल", "vscode": "वीएस कोड",
-    "windows": "विंडोज़", "desktop": "डेस्कटॉप", "laptop": "लैपटॉप",
-    "computer": "कंप्यूटर", "bluetooth": "ब्लूटूथ", "internet": "इंटरनेट",
-    "online": "ऑनलाइन", "offline": "ऑफलाइन", "restart": "रीस्टार्ट",
-    "reboot": "रीबूट", "shutdown": "शटडाउन", "lock": "लॉक", "screen": "स्क्रीन",
-    "screenshot": "स्क्रीनशॉट", "volume": "वॉल्यूम", "brightness": "ब्राइटनेस",
-    "battery": "बैटरी", "settings": "सेटिंग्स", "file": "फ़ाइल", "files": "फ़ाइलें",
-    "folder": "फ़ोल्डर", "folders": "फ़ोल्डर्स", "song": "सॉन्ग", "songs": "सॉन्ग्स",
-    "music": "म्यूज़िक", "playlist": "प्लेलिस्ट", "play": "प्ले", "pause": "पॉज़",
-    "next": "नेक्स्ट", "previous": "प्रीवियस", "mute": "म्यूट", "unmute": "अनम्यूट",
-    "done": "डन", "ready": "रेडी", "cancel": "कैंसिल", "clear": "क्लियर",
-    "delete": "डिलीट", "open": "ओपन", "close": "क्लोज़", "search": "सर्च",
-    "timer": "टाइमर", "alarm": "अलार्म", "reminder": "रिमाइंडर", "notes": "नोट्स",
-    "note": "नोट", "project": "प्रोजेक्ट", "task": "टास्क", "assistant": "असिस्टेंट",
-    "hello": "हेलो", "hi": "हाय", "hey": "हे", "bye": "बाय",
 
     # Conversational Polish & Common Expressions
     "sannata": "सन्नाटा", "sanata": "सन्नाटा", "shanti": "शांति", "khamoshi": "ख़ामोशी",
